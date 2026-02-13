@@ -1,0 +1,253 @@
+# Schema for a Kubernetes-style Deployment configuration
+# Exercises all MOTLY schema validation features:
+#   Required/Optional, string, number, boolean, date, tag, flag, any,
+#   string[], number[], tag[], custom types, enums, patterns, unions (oneOf),
+#   Additional (allow/reject/validate-as), bare Additional, nested schemas,
+#   and custom types referencing other custom types.
+
+Types: {
+
+  # ── Labels & Annotations ───────────────────────────────────────────
+  # Labels are arbitrary string→string maps
+  Labels: { Additional=string }
+
+  # Annotations allow any value type
+  Annotations: { Additional=any }
+
+  # ── Metadata ───────────────────────────────────────────────────────
+  Metadata: {
+    Required: {
+      name=string { matches='^[a-z][a-z0-9._-]*$' }
+    }
+    Optional: {
+      namespace=string { matches='^[a-z][a-z0-9-]*$' }
+      labels=Labels
+      annotations=Annotations
+      createdAt=date
+    }
+  }
+
+  # ── Networking ─────────────────────────────────────────────────────
+  ContainerPort: {
+    Required: {
+      containerPort=number
+    }
+    Optional: {
+      name=string
+      protocol=string { eq=[TCP, UDP, SCTP] }
+    }
+  }
+
+  ServicePort: {
+    Required: {
+      port=number
+    }
+    Optional: {
+      targetPort=number
+      name=string
+      protocol=string { eq=[TCP, UDP, SCTP] }
+    }
+  }
+
+  # ── Probes ─────────────────────────────────────────────────────────
+  HttpGet: {
+    Required: { path=string port=number }
+    Optional: { scheme=string { eq=[HTTP, HTTPS] } }
+  }
+
+  ExecAction: {
+    Required: { command="string[]" }
+  }
+
+  TcpSocket: {
+    Required: { port=number }
+  }
+
+  ProbeAction.oneOf=[HttpGet, ExecAction, TcpSocket]
+
+  Probe: {
+    Required: { action=ProbeAction }
+    Optional: {
+      initialDelaySeconds=number
+      periodSeconds=number
+      timeoutSeconds=number
+      failureThreshold=number
+      successThreshold=number
+    }
+  }
+
+  # ── Resources ──────────────────────────────────────────────────────
+  ResourceQuantities: {
+    Optional: {
+      cpu=string
+      memory=string
+      storage=string
+    }
+    Additional=string
+  }
+
+  ResourceRequirements: {
+    Optional: {
+      limits=ResourceQuantities
+      requests=ResourceQuantities
+    }
+  }
+
+  # ── Volumes ────────────────────────────────────────────────────────
+  EmptyDir: {
+    Optional: { medium=string { eq=[Memory, HugePages] } sizeLimit=string }
+  }
+
+  HostPath: {
+    Required: { path=string }
+    Optional: { type=string }
+  }
+
+  ConfigMapRef: {
+    Required: { name=string }
+    Optional: { optional=boolean }
+  }
+
+  SecretRef: {
+    Required: { secretName=string }
+    Optional: { optional=boolean }
+  }
+
+  PvcRef: {
+    Required: { claimName=string }
+    Optional: { readOnly=boolean }
+  }
+
+  VolumeSource.oneOf=[EmptyDir, HostPath, ConfigMapRef, SecretRef, PvcRef]
+
+  Volume: {
+    Required: {
+      name=string
+      source=VolumeSource
+    }
+  }
+
+  VolumeMount: {
+    Required: {
+      name=string
+      mountPath=string
+    }
+    Optional: {
+      subPath=string
+      readOnly=boolean
+    }
+  }
+
+  # ── Environment Variables ──────────────────────────────────────────
+  EnvVar: {
+    Required: { name=string }
+    Optional: { value=string }
+  }
+
+  # ── Security ───────────────────────────────────────────────────────
+  SecurityContext: {
+    Optional: {
+      runAsUser=number
+      runAsGroup=number
+      runAsNonRoot=boolean
+      readOnlyRootFilesystem=boolean
+      privileged=boolean
+      allowPrivilegeEscalation=boolean
+    }
+  }
+
+  # ── Container ──────────────────────────────────────────────────────
+  Container: {
+    Required: {
+      name=string
+      image=string { matches='.*:.*' }
+    }
+    Optional: {
+      command="string[]"
+      args="string[]"
+      ports="ContainerPort[]"
+      env="EnvVar[]"
+      resources=ResourceRequirements
+      volumeMounts="VolumeMount[]"
+      livenessProbe=Probe
+      readinessProbe=Probe
+      startupProbe=Probe
+      securityContext=SecurityContext
+      imagePullPolicy=string { eq=[Always, IfNotPresent, Never] }
+      workingDir=string
+      stdin=boolean
+      tty=boolean
+    }
+  }
+
+  # ── Pod Spec ───────────────────────────────────────────────────────
+  PodSpec: {
+    Required: {
+      containers="Container[]"
+    }
+    Optional: {
+      initContainers="Container[]"
+      volumes="Volume[]"
+      restartPolicy=string { eq=[Always, OnFailure, Never] }
+      terminationGracePeriodSeconds=number
+      serviceAccountName=string
+      nodeName=string
+      nodeSelector=Labels
+      tolerations="any[]"
+      dnsPolicy=string { eq=[ClusterFirst, Default, None, ClusterFirstWithHostNet] }
+      hostNetwork=boolean
+      priorityClassName=string
+    }
+  }
+
+  # ── Selector ───────────────────────────────────────────────────────
+  LabelSelector: {
+    Optional: {
+      matchLabels=Labels
+    }
+    Additional
+  }
+
+  # ── Deployment Strategy ────────────────────────────────────────────
+  RollingUpdate: {
+    Optional: {
+      maxSurge=string
+      maxUnavailable=string
+    }
+  }
+
+  DeploymentStrategy: {
+    Required: {
+      type=string { eq=[RollingUpdate, Recreate] }
+    }
+    Optional: {
+      rollingUpdate=RollingUpdate
+    }
+  }
+}
+
+# ── Root: Deployment ─────────────────────────────────────────────────
+Required: {
+  apiVersion=string
+  kind=string { eq=[Deployment, StatefulSet, DaemonSet] }
+  metadata=Metadata
+  spec {
+    Required: {
+      selector=LabelSelector
+      template {
+        Required: {
+          metadata=Metadata
+          spec=PodSpec
+        }
+      }
+    }
+    Optional: {
+      replicas=number
+      strategy=DeploymentStrategy
+      minReadySeconds=number
+      revisionHistoryLimit=number
+      paused=boolean
+      progressDeadlineSeconds=number
+    }
+  }
+}

@@ -1,0 +1,83 @@
+[
+  {
+    "name": "basic parse and getValue",
+    "steps": [
+      {"action": "parse", "input": "name = hello"},
+      {"action": "getValue", "expected": {"properties": {"name": {"eq": "hello"}}}}
+    ]
+  },
+  {
+    "name": "accumulate multiple parses",
+    "steps": [
+      {"action": "parse", "input": "name = hello"},
+      {"action": "parse", "input": "port = 8080"},
+      {"action": "getValue", "expected": {"properties": {"name": {"eq": "hello"}, "port": {"eq": 8080}}}}
+    ]
+  },
+  {
+    "name": "reset clears value",
+    "steps": [
+      {"action": "parse", "input": "name = hello"},
+      {"action": "reset"},
+      {"action": "getValue", "expected": {}}
+    ]
+  },
+  {
+    "name": "reset keeps schema",
+    "steps": [
+      {"action": "parseSchema", "input": "Required { name = string }"},
+      {"action": "parse", "input": "name = hello"},
+      {"action": "validateSchema", "expectedErrors": []},
+      {"action": "reset"},
+      {"action": "getValue", "expected": {}},
+      {"action": "parse", "input": "name = world"},
+      {"action": "validateSchema", "expectedErrors": []}
+    ]
+  },
+  {
+    "name": "parse after reset",
+    "steps": [
+      {"action": "parse", "input": "a = 1"},
+      {"action": "reset"},
+      {"action": "parse", "input": "b = 2"},
+      {"action": "getValue", "expected": {"properties": {"b": {"eq": 2}}}}
+    ]
+  },
+  {
+    "name": "schema validation missing required after reset",
+    "steps": [
+      {"action": "parseSchema", "input": "Required { name = string }"},
+      {"action": "parse", "input": "name = hello"},
+      {"action": "validateSchema", "expectedErrors": []},
+      {"action": "reset"},
+      {"action": "validateSchema", "expectedErrors": [{"code": "missing-required"}]}
+    ]
+  },
+  {
+    "name": "no schema returns empty errors",
+    "steps": [
+      {"action": "parse", "input": "name = hello"},
+      {"action": "validateSchema", "expectedErrors": []}
+    ]
+  },
+  {
+    "name": "parse error returns errors",
+    "steps": [
+      {"action": "parse", "input": "= bad", "expectErrors": true}
+    ]
+  },
+  {
+    "name": "reference validation",
+    "steps": [
+      {"action": "parse", "input": "outer { value = hello  inner { ref = $^value } }"},
+      {"action": "validateReferences", "expectedErrors": []}
+    ]
+  },
+  {
+    "name": "reference validation errors",
+    "steps": [
+      {"action": "parse", "input": "a { ref = $^missing }"},
+      {"action": "validateReferences", "expectedErrors": [{"code": "unresolved-reference"}]}
+    ]
+  }
+]

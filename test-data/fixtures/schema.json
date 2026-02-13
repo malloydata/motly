@@ -1,0 +1,422 @@
+[
+  {
+    "name": "valid required properties",
+    "schema": "Required { name = string  port = number }",
+    "input": "name = hello  port = 8080",
+    "expectedErrors": []
+  },
+  {
+    "name": "missing required property",
+    "schema": "Required { name = string  port = number }",
+    "input": "name = hello",
+    "expectedErrors": [{"code": "missing-required", "path": ["port"]}]
+  },
+  {
+    "name": "wrong type string for number",
+    "schema": "Required { port = number }",
+    "input": "port = notanumber",
+    "expectedErrors": [{"code": "wrong-type", "path": ["port"]}]
+  },
+  {
+    "name": "wrong type number for string",
+    "schema": "Required { name = string }",
+    "input": "name = 42",
+    "expectedErrors": [{"code": "wrong-type", "path": ["name"]}]
+  },
+  {
+    "name": "boolean type valid",
+    "schema": "Required { flag = boolean }",
+    "input": "flag = @true",
+    "expectedErrors": []
+  },
+  {
+    "name": "boolean type invalid",
+    "schema": "Required { flag = boolean }",
+    "input": "flag = yes",
+    "expectedErrors": [{"code": "wrong-type", "path": ["flag"]}]
+  },
+  {
+    "name": "date type valid",
+    "schema": "Required { when = date }",
+    "input": "when = @2024-01-15",
+    "expectedErrors": []
+  },
+  {
+    "name": "date type invalid",
+    "schema": "Required { when = date }",
+    "input": "when = yesterday",
+    "expectedErrors": [{"code": "wrong-type", "path": ["when"]}]
+  },
+  {
+    "name": "tag type valid",
+    "schema": "Required { meta = tag }",
+    "input": "meta { x }",
+    "expectedErrors": []
+  },
+  {
+    "name": "flag type valid",
+    "schema": "Required { enabled = flag }",
+    "input": "enabled",
+    "expectedErrors": []
+  },
+  {
+    "name": "any type accepts string",
+    "schema": "Required { x = any }",
+    "input": "x = hello",
+    "expectedErrors": []
+  },
+  {
+    "name": "any type accepts number",
+    "schema": "Required { x = any }",
+    "input": "x = 42",
+    "expectedErrors": []
+  },
+  {
+    "name": "optional property valid",
+    "schema": "Optional { name = string }",
+    "input": "name = hello",
+    "expectedErrors": []
+  },
+  {
+    "name": "optional property absent is ok",
+    "schema": "Optional { name = string }",
+    "input": "",
+    "expectedErrors": []
+  },
+  {
+    "name": "optional property wrong type",
+    "schema": "Optional { port = number }",
+    "input": "port = notanumber",
+    "expectedErrors": [{"code": "wrong-type", "path": ["port"]}]
+  },
+  {
+    "name": "unknown property rejected by default",
+    "schema": "Required { name = string }",
+    "input": "name = hello  extra = oops",
+    "expectedErrors": [{"code": "unknown-property", "path": ["extra"]}]
+  },
+  {
+    "name": "additional allow",
+    "schema": "Required { name = string } Additional = allow",
+    "input": "name = hello  extra = ok",
+    "expectedErrors": []
+  },
+  {
+    "name": "array type valid",
+    "schema": "Required { items = \"string[]\" }",
+    "input": "items = [a, b, c]",
+    "expectedErrors": []
+  },
+  {
+    "name": "array type wrong element",
+    "schema": "Required { items = \"number[]\" }",
+    "input": "items = [a, b]",
+    "expectedErrors": [{"code": "wrong-type", "path": ["items", "[0]"]}, {"code": "wrong-type", "path": ["items", "[1]"]}]
+  },
+  {
+    "name": "array type not an array",
+    "schema": "Required { items = \"string[]\" }",
+    "input": "items = hello",
+    "expectedErrors": [{"code": "wrong-type", "path": ["items"]}]
+  },
+  {
+    "name": "enum valid",
+    "schema": "Required { color { eq = [red, green, blue] } }",
+    "input": "color = red",
+    "expectedErrors": []
+  },
+  {
+    "name": "enum invalid",
+    "schema": "Required { color { eq = [red, green, blue] } }",
+    "input": "color = yellow",
+    "expectedErrors": [{"code": "invalid-enum-value", "path": ["color"]}]
+  },
+  {
+    "name": "nested schema validation",
+    "schema": "Required { meta { Required { name = string } } }",
+    "input": "meta { name = hello }",
+    "expectedErrors": []
+  },
+  {
+    "name": "nested schema missing required",
+    "schema": "Required { meta { Required { name = string } } }",
+    "input": "meta { }",
+    "expectedErrors": [{"code": "missing-required", "path": ["meta", "name"]}]
+  },
+  {
+    "name": "pattern match valid",
+    "schema": "Required { email = string { matches = \"^[^@]+@[^@]+$\" } }",
+    "input": "email = \"user@example.com\"",
+    "expectedErrors": []
+  },
+  {
+    "name": "pattern match invalid",
+    "schema": "Required { email = string { matches = \"^[^@]+@[^@]+$\" } }",
+    "input": "email = notanemail",
+    "expectedErrors": [{"code": "pattern-mismatch", "path": ["email"]}]
+  },
+  {
+    "name": "number array valid",
+    "schema": "Required { scores = \"number[]\" }",
+    "input": "scores = [1, 2, 3]",
+    "expectedErrors": []
+  },
+  {
+    "name": "boolean array valid",
+    "schema": "Required { flags = \"boolean[]\" }",
+    "input": "flags = [@true, @false]",
+    "expectedErrors": []
+  },
+  {
+    "name": "date array valid",
+    "schema": "Required { dates = \"date[]\" }",
+    "input": "dates = [@2024-01-01, @2024-02-01]",
+    "expectedErrors": []
+  },
+  {
+    "name": "any array valid",
+    "schema": "Required { items = \"any[]\" }",
+    "input": "items = [1, hello, @true]",
+    "expectedErrors": []
+  },
+  {
+    "name": "empty array matches any array type",
+    "schema": "Required { items = \"string[]\" }",
+    "input": "items = []",
+    "expectedErrors": []
+  },
+  {
+    "name": "any accepts boolean",
+    "schema": "Required { x = any }",
+    "input": "x = @true",
+    "expectedErrors": []
+  },
+  {
+    "name": "any accepts date",
+    "schema": "Required { x = any }",
+    "input": "x = @2024-01-15",
+    "expectedErrors": []
+  },
+  {
+    "name": "any accepts tag",
+    "schema": "Required { x = any }",
+    "input": "x { a = 1 }",
+    "expectedErrors": []
+  },
+  {
+    "name": "any accepts array",
+    "schema": "Required { x = any }",
+    "input": "x = [1, 2]",
+    "expectedErrors": []
+  },
+  {
+    "name": "any accepts flag",
+    "schema": "Required { x = any }",
+    "input": "x",
+    "expectedErrors": []
+  },
+  {
+    "name": "tag type accepts scalar",
+    "schema": "Required { config = tag }",
+    "input": "config = value",
+    "expectedErrors": []
+  },
+  {
+    "name": "flag type accepts boolean",
+    "schema": "Required { hidden = flag }",
+    "input": "hidden = @true",
+    "expectedErrors": []
+  },
+  {
+    "name": "flag type accepts tag with properties",
+    "schema": "Required { hidden = flag }",
+    "input": "hidden { x = 1 }",
+    "expectedErrors": []
+  },
+  {
+    "name": "optional flag present",
+    "schema": "Required { name = string } Optional { deprecated = flag }",
+    "input": "name = test deprecated",
+    "expectedErrors": []
+  },
+  {
+    "name": "optional flag absent",
+    "schema": "Required { name = string } Optional { deprecated = flag }",
+    "input": "name = test",
+    "expectedErrors": []
+  },
+  {
+    "name": "empty tag optional only",
+    "schema": "Optional { name = string }",
+    "input": "",
+    "expectedErrors": []
+  },
+  {
+    "name": "unknown nested property",
+    "schema": "Required { size { Required { width = number } } }",
+    "input": "size { width = 10 extra = 5 }",
+    "expectedErrors": [{"code": "unknown-property", "path": ["size", "extra"]}]
+  },
+  {
+    "name": "custom type valid",
+    "schema": "Types { Person { Required { name = string age = number } } } Required { user = Person }",
+    "input": "user { name = alice age = 30 }",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom type missing field",
+    "schema": "Types { Person { Required { name = string age = number } } } Required { user = Person }",
+    "input": "user { name = alice }",
+    "expectedErrors": [{"code": "missing-required", "path": ["user", "age"]}]
+  },
+  {
+    "name": "custom type array valid",
+    "schema": "Types { Item { Required { name = string } } } Required { items = \"Item[]\" }",
+    "input": "items = [{name = a}, {name = b}]",
+    "expectedErrors": []
+  },
+  {
+    "name": "additional reject explicit",
+    "schema": "Required { name = string } Additional = reject",
+    "input": "name = alice extra = stuff",
+    "expectedErrors": [{"code": "unknown-property", "path": ["extra"]}]
+  },
+  {
+    "name": "additional validate as type valid",
+    "schema": "Required { name = string } Additional = number",
+    "input": "name = alice count = 42 size = 10",
+    "expectedErrors": []
+  },
+  {
+    "name": "additional validate as type wrong",
+    "schema": "Required { name = string } Additional = number",
+    "input": "name = alice count = hello",
+    "expectedErrors": [{"code": "wrong-type", "path": ["count"]}]
+  },
+  {
+    "name": "union type valid first variant",
+    "schema": "Required { value { oneOf = [string, number] } }",
+    "input": "value = hello",
+    "expectedErrors": []
+  },
+  {
+    "name": "union type valid second variant",
+    "schema": "Required { value { oneOf = [string, number] } }",
+    "input": "value = 42",
+    "expectedErrors": []
+  },
+  {
+    "name": "union type invalid",
+    "schema": "Required { value { oneOf = [string, number] } }",
+    "input": "value = @true",
+    "expectedErrors": [{"code": "wrong-type", "path": ["value"]}]
+  },
+  {
+    "name": "multiple schema errors",
+    "schema": "Required { name = string age = number active = boolean }",
+    "input": "name = 42 age = old",
+    "expectedErrors": [{"code": "missing-required", "path": ["active"]}, {"code": "wrong-type", "path": ["age"]}, {"code": "wrong-type", "path": ["name"]}]
+  },
+  {
+    "name": "bare Additional allows unknown",
+    "schema": "Required { name = string } Additional",
+    "input": "name = alice extra = stuff more = 42",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom enum type valid",
+    "schema": "Types { Color = string { eq = [red, green, blue] } } Required { c = Color }",
+    "input": "c = green",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom enum type invalid",
+    "schema": "Types { Color = string { eq = [red, green, blue] } } Required { c = Color }",
+    "input": "c = yellow",
+    "expectedErrors": [{"code": "invalid-enum-value", "path": ["c"]}]
+  },
+  {
+    "name": "custom pattern type valid",
+    "schema": "Types { Email = string { matches = '.*@.*' } } Required { e = Email }",
+    "input": "e = \"a@b.com\"",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom pattern type invalid",
+    "schema": "Types { Email = string { matches = '.*@.*' } } Required { e = Email }",
+    "input": "e = nope",
+    "expectedErrors": [{"code": "pattern-mismatch", "path": ["e"]}]
+  },
+  {
+    "name": "non-string for pattern type",
+    "schema": "Types { Email = string { matches = '.*@.*' } } Required { e = Email }",
+    "input": "e = 123",
+    "expectedErrors": [{"code": "wrong-type", "path": ["e"]}, {"code": "pattern-mismatch", "path": ["e"]}]
+  },
+  {
+    "name": "additional with custom type valid",
+    "schema": "Types { Pair { Required { x = number y = number } } } Additional = Pair",
+    "input": "a { x = 1 y = 2 } b { x = 3 y = 4 }",
+    "expectedErrors": []
+  },
+  {
+    "name": "additional with custom type invalid",
+    "schema": "Types { Pair { Required { x = number y = number } } } Additional = Pair",
+    "input": "a { x = 1 y = 2 } b { x = 3 }",
+    "expectedErrors": [{"code": "missing-required", "path": ["b", "y"]}]
+  },
+  {
+    "name": "custom type referencing another valid",
+    "schema": "Types { Addr { Required { city = string } } Person { Required { name = string home = Addr } } } Required { user = Person }",
+    "input": "user { name = alice home { city = NYC } }",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom type referencing another invalid",
+    "schema": "Types { Addr { Required { city = string } } Person { Required { name = string home = Addr } } } Required { user = Person }",
+    "input": "user { name = alice home { city = 42 } }",
+    "expectedErrors": [{"code": "wrong-type", "path": ["user", "home", "city"]}]
+  },
+  {
+    "name": "custom union type valid",
+    "schema": "Types { Val { oneOf = [string, number] } } Required { x = Val }",
+    "input": "x = hello",
+    "expectedErrors": []
+  },
+  {
+    "name": "custom union type invalid",
+    "schema": "Types { Val { oneOf = [string, number] } } Required { x = Val }",
+    "input": "x = @true",
+    "expectedErrors": [{"code": "wrong-type", "path": ["x"]}]
+  },
+  {
+    "name": "recursive type valid",
+    "schema": "Types { TreeNode { Required { value = number } Optional { children = \"TreeNode[]\" } } } Required { root = TreeNode }",
+    "input": "root { value = 1 children = [{value = 2}, {value = 3}] }",
+    "expectedErrors": []
+  },
+  {
+    "name": "string array wrong element at index",
+    "schema": "Required { tags = \"string[]\" }",
+    "input": "tags = [a, 42, c]",
+    "expectedErrors": [{"code": "wrong-type", "path": ["tags", "[1]"]}]
+  },
+  {
+    "name": "custom type array element invalid",
+    "schema": "Types { Item { Required { name = string } } } Required { items = \"Item[]\" }",
+    "input": "items = [{name = a}, {price = 10}]",
+    "expectedErrors": [{"code": "missing-required", "path": ["items", "[1]", "name"]}, {"code": "unknown-property", "path": ["items", "[1]", "price"]}]
+  },
+  {
+    "name": "additional only typed valid",
+    "schema": "Additional = string",
+    "input": "a = hello b = world",
+    "expectedErrors": []
+  },
+  {
+    "name": "additional only typed wrong",
+    "schema": "Additional = string",
+    "input": "a = hello b = 42",
+    "expectedErrors": [{"code": "wrong-type", "path": ["b"]}]
+  }
+]

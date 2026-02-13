@@ -1,0 +1,196 @@
+# A realistic Kubernetes Deployment config for a web application
+# with sidecars, probes, volumes, resource limits, security contexts, etc.
+
+apiVersion="apps/v1"
+kind=Deployment
+
+metadata {
+  name="web-api"
+  namespace=production
+  labels {
+    app="web-api"
+    tier=backend
+    version=v2
+  }
+  annotations {
+    `deployment.kubernetes.io/revision`=3
+    `prometheus.io/scrape`=@true
+    `prometheus.io/port`=9090
+  }
+  createdAt=@2025-08-15T14:30:00Z
+}
+
+spec {
+  replicas=3
+  revisionHistoryLimit=10
+  progressDeadlineSeconds=600
+  minReadySeconds=5
+
+  strategy {
+    type=RollingUpdate
+    rollingUpdate {
+      maxSurge="1"
+      maxUnavailable="0"
+    }
+  }
+
+  selector {
+    matchLabels {
+      app="web-api"
+      tier=backend
+    }
+  }
+
+  template {
+    metadata {
+      name="web-api-pod"
+      labels {
+        app="web-api"
+        tier=backend
+        version=v2
+      }
+      annotations {
+        `sidecar.istio.io/inject`=@true
+      }
+    }
+
+    spec {
+      serviceAccountName="web-api-sa"
+      terminationGracePeriodSeconds=30
+      restartPolicy=Always
+      dnsPolicy=ClusterFirst
+
+      nodeSelector {
+        disktype=ssd
+        env=production
+      }
+
+      # ── Main application container ──────────────────────────────
+      containers=[
+        {
+          name="api-server"
+          image="registry.example.com/web-api:v2.4.1"
+          imagePullPolicy=IfNotPresent
+          workingDir="/app"
+
+          command=["node", "dist/server.js"]
+          args=["--config", "/etc/config/app.yaml", "--port", "8080"]
+
+          ports=[
+            { containerPort=8080 name=http protocol=TCP },
+            { containerPort=9090 name=metrics protocol=TCP }
+          ]
+
+          env=[
+            { name=NODE_ENV value=production },
+            { name=LOG_LEVEL value=info },
+            { name=DB_HOST value="db.internal.svc.cluster.local" },
+            { name=CACHE_TTL value="300" }
+          ]
+
+          resources {
+            requests {
+              cpu=250m
+              memory=512Mi
+            }
+            limits {
+              cpu=1000m
+              memory=1Gi
+            }
+          }
+
+          livenessProbe {
+            action {
+              path="/healthz"
+              port=8080
+              scheme=HTTP
+            }
+            initialDelaySeconds=15
+            periodSeconds=20
+            timeoutSeconds=3
+            failureThreshold=3
+          }
+
+          readinessProbe {
+            action {
+              path="/ready"
+              port=8080
+              scheme=HTTP
+            }
+            initialDelaySeconds=5
+            periodSeconds=10
+            timeoutSeconds=2
+            successThreshold=1
+          }
+
+          startupProbe {
+            action {
+              command=["sh", "-c", "curl -f http://localhost:8080/healthz"]
+            }
+            initialDelaySeconds=0
+            periodSeconds=5
+            failureThreshold=30
+          }
+
+          volumeMounts=[
+            { name=config mountPath="/etc/config" readOnly=@true },
+            { name=secrets mountPath="/etc/secrets" readOnly=@true },
+            { name=tmp mountPath="/tmp" },
+            { name=data mountPath="/app/data" subPath=api }
+          ]
+
+          securityContext {
+            runAsUser=1000
+            runAsGroup=1000
+            runAsNonRoot=@true
+            readOnlyRootFilesystem=@true
+            allowPrivilegeEscalation=@false
+          }
+        },
+
+        # ── Log shipping sidecar ──────────────────────────────────
+        {
+          name="log-shipper"
+          image="fluent/fluent-bit:2.1"
+          resources {
+            requests { cpu=50m memory=64Mi }
+            limits { cpu=100m memory=128Mi }
+          }
+          volumeMounts=[
+            { name=tmp mountPath="/var/log" readOnly=@true }
+          ]
+          securityContext {
+            runAsNonRoot=@true
+            readOnlyRootFilesystem=@true
+            privileged=@false
+          }
+        }
+      ]
+
+      # ── Init container for DB migration ─────────────────────────
+      initContainers=[
+        {
+          name="db-migrate"
+          image="registry.example.com/web-api:v2.4.1"
+          command=["node", "dist/migrate.js"]
+          env=[
+            { name=DB_HOST value="db.internal.svc.cluster.local" },
+            { name=RUN_MIGRATIONS value="true" }
+          ]
+          securityContext {
+            runAsNonRoot=@true
+            allowPrivilegeEscalation=@false
+          }
+        }
+      ]
+
+      # ── Volumes ─────────────────────────────────────────────────
+      volumes=[
+        { name=config source { name="web-api-config" } },
+        { name=secrets source { secretName="web-api-secrets" } },
+        { name=tmp source { medium=Memory sizeLimit=100Mi } },
+        { name=data source { claimName="web-api-pvc" readOnly=@false } }
+      ]
+    }
+  }
+}

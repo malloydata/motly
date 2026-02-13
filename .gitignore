@@ -1,0 +1,7 @@
+/target
+bindings/typescript/interface/build/
+bindings/typescript/interface/node_modules/
+bindings/typescript/parser/build/
+bindings/typescript/parser/build-test/
+bindings/typescript/parser/node_modules/
+bindings/typescript/parser/*.tgz

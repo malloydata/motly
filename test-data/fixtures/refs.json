@@ -1,0 +1,72 @@
+[
+  {
+    "name": "valid sibling reference",
+    "input": "outer { value = hello  inner { ref = $^value } }",
+    "expectedErrors": []
+  },
+  {
+    "name": "unresolved reference",
+    "input": "a { ref = $^missing }",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["a", "ref"]}]
+  },
+  {
+    "name": "valid absolute reference",
+    "input": "target = hello  ref = $target",
+    "expectedErrors": []
+  },
+  {
+    "name": "unresolved absolute reference",
+    "input": "ref = $missing",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["ref"]}]
+  },
+  {
+    "name": "no references is valid",
+    "input": "a = 1  b = 2",
+    "expectedErrors": []
+  },
+  {
+    "name": "valid nested path",
+    "input": "config { db { host = localhost } }  ref = $config.db.host",
+    "expectedErrors": []
+  },
+  {
+    "name": "valid relative up two levels",
+    "input": "root = hello  outer { inner { ref = $^^root } }",
+    "expectedErrors": []
+  },
+  {
+    "name": "array index valid",
+    "input": "items = [a, b]  ref = $items[1]",
+    "expectedErrors": []
+  },
+  {
+    "name": "array index out of bounds",
+    "input": "items = [a]  ref = $items[5]",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["ref"]}]
+  },
+  {
+    "name": "multiple unresolved references",
+    "input": "a = $missing1  b = $missing2",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["a"]}, {"code": "unresolved-reference", "path": ["b"]}]
+  },
+  {
+    "name": "relative too far up",
+    "input": "ref = $^^^^^way.too.far",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["ref"]}]
+  },
+  {
+    "name": "references in array valid",
+    "input": "source = hello  refs = [$source, $source]",
+    "expectedErrors": []
+  },
+  {
+    "name": "references in array invalid",
+    "input": "refs = [$missing]",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["refs", "[0]"]}]
+  },
+  {
+    "name": "complex path valid",
+    "input": "items = [{name = alice}, {name = bob}]  ref = $items[0].name",
+    "expectedErrors": []
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {"name": "leading equals", "input": "= bad", "expectErrors": true},
+  {"name": "unterminated string", "input": "x = \"hello", "expectErrors": true},
+  {"name": "unterminated single quoted string", "input": "x = 'hello", "expectErrors": true},
+  {"name": "unterminated triple quoted string", "input": "x = \"\"\"hello", "expectErrors": true},
+  {"name": "unterminated block", "input": "x {", "expectErrors": true},
+  {"name": "unterminated array", "input": "x = [a, b", "expectErrors": true},
+  {"name": "illegal constant", "input": "x = @notaconst", "expectErrors": true},
+  {"name": "minus without name", "input": "x = -", "expectErrors": true},
+  {"name": "unterminated triple single quoted", "input": "x = '''hello", "expectErrors": true},
+  {"name": "raw single ending backslash unterminated", "input": "x='\\' ", "expectErrors": true},
+  {"name": "raw single odd backslashes unterminated", "input": "x='\\\\\\' ", "expectErrors": true},
+  {"name": "triple single backslash eats delimiter unterminated", "input": "x='''\\'''", "expectErrors": true}
+]

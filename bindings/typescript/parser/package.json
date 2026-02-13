@@ -1,0 +1,31 @@
+{
+  "name": "@malloydata/motly-ts-parser",
+  "version": "0.0.1",
+  "description": "MOTLY text to wire format parser — pure TypeScript",
+  "license": "MIT",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "files": [
+    "build/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/malloydata/motly.git",
+    "directory": "bindings/typescript/parser"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:test": "tsc -p test/tsconfig.json",
+    "test": "npm run build && npm run build:test && node --test build-test/test.js",
+    "clean": "rm -rf build build-test",
+    "pack": "npm run build && npm pack"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.2",
+    "motly-ts-interface": "file:../interface",
+    "typescript": "^5.0.0"
+  }
+}

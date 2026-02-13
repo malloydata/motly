@@ -1,0 +1,25 @@
+[package]
+name = "motly-rust"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["lib"]
+
+[[bin]]
+name = "motly"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+panic = "abort"
+codegen-units = 1

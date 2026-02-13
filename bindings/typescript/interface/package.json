@@ -1,0 +1,16 @@
+{
+  "name": "motly-ts-interface",
+  "version": "0.0.1",
+  "description": "Shared TypeScript types for MOTLY packages — enables seamless switching between the pure TS and future WASM implementations",
+  "license": "MIT",
+  "private": true,
+  "main": "build/types.js",
+  "types": "build/types.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf build"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
