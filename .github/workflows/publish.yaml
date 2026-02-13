@@ -1,0 +1,32 @@
+name: Publish to npm
+
+on: [workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+      - name: Build and test
+        run: |
+          cd bindings/typescript/interface && npm ci --loglevel error && npm run build && cd -
+          cd bindings/typescript/parser && npm ci --loglevel error && npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          registry-url: https://registry.npmjs.org
+      - name: Build and publish
+        run: |
+          cd bindings/typescript/interface && npm ci --loglevel error && npm run build && cd -
+          cd bindings/typescript/parser && npm ci --loglevel error && npm run build && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

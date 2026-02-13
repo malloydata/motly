@@ -54,8 +54,4 @@ git -C "$REPO_ROOT" push origin main --tags
 echo "Creating GitHub release..."
 gh release create "$TAG" --generate-notes --title "$TAG" --repo "$(git -C "$REPO_ROOT" remote get-url origin)"
 
-# Publish to npm
-echo "Publishing to npm..."
-(cd "$REPO_ROOT/bindings/typescript/parser" && npm run build && npm publish)
-
-echo "Done: $TAG published"
+echo "Done: $TAG pushed. Run 'Publish to npm' action on GitHub to publish."
