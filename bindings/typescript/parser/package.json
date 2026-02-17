@@ -1,6 +1,6 @@
 {
   "name": "@malloydata/motly-ts-parser",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "MOTLY text to wire format parser — pure TypeScript",
   "license": "MIT",
   "main": "build/index.js",
