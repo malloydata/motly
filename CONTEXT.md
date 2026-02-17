@@ -42,7 +42,7 @@ bindings/typescript/
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
       validate.ts      — TypeScript port of src/validate.rs (~740 lines)
-    test/test.ts       — 210 tests (hand-written + shared fixtures)
+    test/test.ts       — 219 tests (hand-written + shared fixtures)
 
 docs/
   language.md      — Complete MOTLY language reference with EBNF grammar
@@ -50,7 +50,7 @@ docs/
 
 test-data/
   fixtures/        — Shared JSON test fixtures (both implementations run these)
-    parse.json         — 103 entries: parse input → expected value
+    parse.json         — 112 entries: parse input → expected value
     parse-errors.json  — 13 entries: parse input → expected errors
     schema.json        — ~62 entries: schema + input → expected validation errors
     refs.json          — 15 entries: input → expected reference validation errors
@@ -77,6 +77,7 @@ Full reference: `docs/language.md`. EBNF grammar is at the bottom of that file.
 - **Flags**: bare name with no value creates a presence-only node: `hidden`
 - **Deletion**: `-name` deletes a property, `-...` clears all properties in scope
 - **Comments**: `# line comment`
+- **Commas**: optional separators between statements (treated as whitespace); required in arrays
 
 ### Replace vs Merge (critical concept)
 
@@ -175,7 +176,7 @@ npm run build         # tsc — must be built before the parser package
 cd bindings/typescript/parser
 npm install
 npm run build         # tsc
-npm test              # 210 tests via node --test
+npm test              # 219 tests via node --test
 npm run pack          # produces @malloydata/motly-ts-parser tarball
 ```
 Zero native dependencies. Uses Node.js built-in test runner (`node:test`).
@@ -201,6 +202,18 @@ When `input` is a `string[]`, each element is a separate `parse()` call (tests a
 
 - **Value comparison**: Custom `deepEqual` that handles `Date` objects and compares object keys order-independently (sorts keys before comparing).
 - **Error list comparison**: Schema and refs fixture runners sort both actual and expected errors by `(code, path)` before comparing, so error emission order doesn't matter. This is consistent across both implementations.
+
+## Release Process
+
+1. Run `./scripts/release.sh [patch|minor|major]` (default: `patch`)
+   - Bumps version in both `bindings/typescript/parser/package.json` and `Cargo.toml`
+   - Runs all tests (Rust + TS)
+   - Commits, tags (`vX.Y.Z`), pushes to `main` with tags
+   - Creates a GitHub release with auto-generated changelog
+2. Manually trigger the **"Publish to npm"** workflow on GitHub Actions (`workflow_dispatch`)
+   - Tests again on CI, then publishes `@malloydata/motly-ts-parser` to npm
+
+The Rust crate is not published to crates.io (yet).
 
 ## Common Pitfalls
 
