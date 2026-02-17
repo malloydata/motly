@@ -11,7 +11,6 @@ pub fn execute(statements: &[Statement], mut root: MOTLYValue) -> MOTLYValue {
     root
 }
 
-
 fn execute_statement(stmt: &Statement, node: &mut MOTLYValue) {
     match stmt {
         Statement::SetEq {
@@ -19,7 +18,13 @@ fn execute_statement(stmt: &Statement, node: &mut MOTLYValue) {
             value,
             properties,
             preserve_properties,
-        } => execute_set_eq(node, path, value, properties.as_deref(), *preserve_properties),
+        } => execute_set_eq(
+            node,
+            path,
+            value,
+            properties.as_deref(),
+            *preserve_properties,
+        ),
         Statement::ReplaceProperties {
             path,
             properties,
@@ -43,7 +48,11 @@ fn execute_set_eq(
     preserve_properties: bool,
 ) {
     // Check if value is a reference (should produce a Link)
-    if let TagValue::Scalar(ScalarValue::Reference { ups, path: ref_path }) = value {
+    if let TagValue::Scalar(ScalarValue::Reference {
+        ups,
+        path: ref_path,
+    }) = value
+    {
         if properties.is_none() && !preserve_properties {
             // Simple reference assignment -> produce a Link
             let (write_key, parent) = build_access_path(node, path);
@@ -121,11 +130,7 @@ fn execute_replace_properties(
         .insert(write_key.to_string(), MOTLYNode::Value(result));
 }
 
-fn execute_update_properties(
-    node: &mut MOTLYValue,
-    path: &[String],
-    properties: &[Statement],
-) {
+fn execute_update_properties(node: &mut MOTLYValue, path: &[String], properties: &[Statement]) {
     let (write_key, parent) = build_access_path(node, path);
 
     let props = parent.get_or_create_properties();
@@ -156,9 +161,10 @@ fn execute_define(node: &mut MOTLYValue, path: &[String], deleted: bool) {
     let (write_key, parent) = build_access_path(node, path);
 
     if deleted {
-        parent
-            .get_or_create_properties()
-            .insert(write_key.to_string(), MOTLYNode::Value(MOTLYValue::deleted()));
+        parent.get_or_create_properties().insert(
+            write_key.to_string(),
+            MOTLYNode::Value(MOTLYValue::deleted()),
+        );
     } else {
         parent
             .get_or_create_properties()
@@ -168,7 +174,10 @@ fn execute_define(node: &mut MOTLYValue, path: &[String], deleted: bool) {
 
 /// Navigate to the parent of the final path segment, creating intermediate
 /// nodes as needed. Returns (final_key, parent_node).
-fn build_access_path<'a>(node: &'a mut MOTLYValue, path: &[String]) -> (String, &'a mut MOTLYValue) {
+fn build_access_path<'a>(
+    node: &'a mut MOTLYValue,
+    path: &[String],
+) -> (String, &'a mut MOTLYValue) {
     assert!(!path.is_empty(), "path must not be empty");
 
     let mut current = node;

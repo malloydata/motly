@@ -111,11 +111,7 @@ fn walk_array_refs<'a>(
 }
 
 /// Check whether a link resolves. Returns `Some(error_message)` on failure.
-fn check_link(
-    link: &MOTLYRef,
-    ancestors: &[&MOTLYValue],
-    root: &MOTLYValue,
-) -> Option<String> {
+fn check_link(link: &MOTLYRef, ancestors: &[&MOTLYValue], root: &MOTLYValue) -> Option<String> {
     let (ups, segments) = parse_link_string(&link.link_to);
 
     // Determine the start node for resolution.
@@ -221,11 +217,7 @@ fn parse_link_string(s: &str) -> (usize, Vec<RefSeg>) {
 }
 
 /// Follow path segments from a start node. Returns Some(error) if unresolved.
-fn resolve_path(
-    start: &MOTLYValue,
-    segments: &[RefSeg],
-    link_str: &str,
-) -> Option<String> {
+fn resolve_path(start: &MOTLYValue, segments: &[RefSeg], link_str: &str) -> Option<String> {
     let mut current: ResolveTarget = ResolveTarget::Node(start);
 
     for seg in segments {
@@ -259,32 +251,30 @@ fn resolve_path(
                     }
                 }
             }
-            (RefSeg::Index(idx), ResolveTarget::Node(node)) => {
-                match &node.eq {
-                    Some(EqValue::Array(arr)) => {
-                        if *idx >= arr.len() {
-                            return Some(format!(
+            (RefSeg::Index(idx), ResolveTarget::Node(node)) => match &node.eq {
+                Some(EqValue::Array(arr)) => {
+                    if *idx >= arr.len() {
+                        return Some(format!(
                                 "Reference \"{}\" could not be resolved: index [{}] out of bounds (array length {})",
                                 link_str, idx, arr.len()
                             ));
-                        }
-                        match &arr[*idx] {
-                            MOTLYNode::Value(child) => {
-                                current = ResolveTarget::Node(child);
-                            }
-                            MOTLYNode::Ref(_) => {
-                                current = ResolveTarget::Terminal;
-                            }
-                        }
                     }
-                    _ => {
-                        return Some(format!(
-                            "Reference \"{}\" could not be resolved: index [{}] used on non-array",
-                            link_str, idx
-                        ));
+                    match &arr[*idx] {
+                        MOTLYNode::Value(child) => {
+                            current = ResolveTarget::Node(child);
+                        }
+                        MOTLYNode::Ref(_) => {
+                            current = ResolveTarget::Terminal;
+                        }
                     }
                 }
-            }
+                _ => {
+                    return Some(format!(
+                        "Reference \"{}\" could not be resolved: index [{}] used on non-array",
+                        link_str, idx
+                    ));
+                }
+            },
             (_, ResolveTarget::Terminal) => {
                 // Trying to navigate further through a terminal (link).
                 // We can't resolve through links, so just consider the remaining path unresolvable.
@@ -319,7 +309,10 @@ pub fn validate_schema(tag: &MOTLYValue, schema: &MOTLYValue) -> Vec<SchemaError
 }
 
 /// Extract a section from a schema node by property name.
-fn extract_section<'a>(node: &'a MOTLYValue, name: &str) -> Option<&'a BTreeMap<String, MOTLYNode>> {
+fn extract_section<'a>(
+    node: &'a MOTLYValue,
+    name: &str,
+) -> Option<&'a BTreeMap<String, MOTLYNode>> {
     node.properties.as_ref()?.get(name).and_then(|v| match v {
         MOTLYNode::Value(n) => n.properties.as_ref(),
         _ => None,
@@ -413,7 +406,13 @@ fn validate_node_against_schema(
                 AdditionalPolicy::ValidateAs(ref type_name) => {
                     if let Some(value) = tag_p.get(key.as_str()) {
                         let synthetic = make_type_spec_node(type_name);
-                        validate_value_type(value, &MOTLYNode::Value(synthetic), types, &prop_path, errors);
+                        validate_value_type(
+                            value,
+                            &MOTLYNode::Value(synthetic),
+                            types,
+                            &prop_path,
+                            errors,
+                        );
                     }
                 }
             }
@@ -525,7 +524,9 @@ fn validate_value_type(
             // If the spec node has no eq, it might be a nested schema (tag type with
             // Required/Optional/Additional sections).
             if spec_node.properties.as_ref().map_or(false, |p| {
-                p.contains_key("Required") || p.contains_key("Optional") || p.contains_key("Additional")
+                p.contains_key("Required")
+                    || p.contains_key("Optional")
+                    || p.contains_key("Additional")
             }) {
                 // Nested schema validation
                 match value {
@@ -750,7 +751,10 @@ fn validate_array_type(
         Some(EqValue::Array(arr)) => arr,
         _ => {
             errors.push(SchemaError {
-                message: format!("Expected type \"{}[]\" but value is not an array", inner_type),
+                message: format!(
+                    "Expected type \"{}[]\" but value is not an array",
+                    inner_type
+                ),
                 path: path.to_vec(),
                 code: "wrong-type",
             });
@@ -917,7 +921,13 @@ fn validate_union(
         };
         let mut trial_errors = Vec::new();
         let synthetic = make_type_spec_node(type_name);
-        validate_value_type(value, &MOTLYNode::Value(synthetic), types, path, &mut trial_errors);
+        validate_value_type(
+            value,
+            &MOTLYNode::Value(synthetic),
+            types,
+            path,
+            &mut trial_errors,
+        );
         if trial_errors.is_empty() {
             return; // matches one of the types
         }

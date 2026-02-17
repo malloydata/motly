@@ -416,9 +416,12 @@ Use the `x-` prefix for organization-specific schema codes (e.g., `x-acme-deploy
 
 ## Grammar (EBNF)
 
+Commas are optional separators between statements (at the top level and inside `{ }` blocks). They are treated as whitespace in those contexts. In arrays, commas remain required element separators.
+
 ```ebnf
-(* Entry point *)
-document        ::= { statement }
+(* Entry point — commas are optional separators between statements *)
+document        ::= statementList
+statementList   ::= { "," } { statement { "," } }
 
 (* Statements *)
 statement       ::= assignment
@@ -475,7 +478,7 @@ arrayElement    ::= scalarValue [ properties ]
 scalarValue     ::= boolean | date | number | string
 
 (* Properties block *)
-properties      ::= "{" { statement } "}"
+properties      ::= "{" statementList "}"
                   | "{" "..." "}"
 
 (* Identifiers — for property names *)

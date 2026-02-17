@@ -31,7 +31,6 @@ impl MOTLYError {
             end,
         }
     }
-
 }
 
 impl fmt::Display for MOTLYError {

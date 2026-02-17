@@ -62,10 +62,7 @@ pub enum Statement {
         properties: Vec<Statement>,
     },
     /// `name` or `-name`
-    Define {
-        path: Vec<String>,
-        deleted: bool,
-    },
+    Define { path: Vec<String>, deleted: bool },
     /// `-...`
     ClearAll,
 }

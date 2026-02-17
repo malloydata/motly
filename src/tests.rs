@@ -32,7 +32,8 @@ fn test_fixture_parse() {
             assert!(
                 result.errors.is_empty(),
                 "Fixture '{}': unexpected parse errors: {:?}",
-                name, result.errors
+                name,
+                result.errors
             );
             result.value
         } else if let Some(input_arr) = input.as_array() {
@@ -44,7 +45,9 @@ fn test_fixture_parse() {
                 assert!(
                     result.errors.is_empty(),
                     "Fixture '{}': unexpected parse errors on chunk '{}': {:?}",
-                    name, chunk_str, result.errors
+                    name,
+                    chunk_str,
+                    result.errors
                 );
                 value = result.value;
             }
@@ -74,7 +77,8 @@ fn test_fixture_parse_errors() {
         assert!(
             !result.errors.is_empty(),
             "Fixture '{}': expected parse errors for input '{}'",
-            name, input
+            name,
+            input
         );
     }
 }
@@ -93,14 +97,16 @@ fn test_fixture_schema() {
         assert!(
             schema.errors.is_empty(),
             "Fixture '{}': schema parse errors: {:?}",
-            name, schema.errors
+            name,
+            schema.errors
         );
 
         let tag = crate::parse_motly(tag_input, MOTLYValue::new());
         assert!(
             tag.errors.is_empty(),
             "Fixture '{}': tag parse errors: {:?}",
-            name, tag.errors
+            name,
+            tag.errors
         );
 
         let errors = validate_schema(&tag.value, &schema.value);
@@ -111,21 +117,36 @@ fn test_fixture_schema() {
             "Fixture '{}': error count mismatch — got {} [{}], expected {}",
             name,
             errors.len(),
-            errors.iter().map(|e| format!("{} at /{}", e.code, e.path.join("/"))).collect::<Vec<_>>().join(", "),
+            errors
+                .iter()
+                .map(|e| format!("{} at /{}", e.code, e.path.join("/")))
+                .collect::<Vec<_>>()
+                .join(", "),
             expected_errors.len()
         );
 
         // Sort both by (code, path) for stable comparison
-        let mut actual: Vec<_> = errors.iter().map(|e| (e.code.to_string(), e.path.clone())).collect();
+        let mut actual: Vec<_> = errors
+            .iter()
+            .map(|e| (e.code.to_string(), e.path.clone()))
+            .collect();
         actual.sort();
-        let mut expected: Vec<_> = expected_errors.iter().map(|e| {
-            let code = e["code"].as_str().unwrap().to_string();
-            let path: Vec<String> = e.get("path")
-                .and_then(|p| p.as_array())
-                .map(|arr| arr.iter().map(|v| v.as_str().unwrap().to_string()).collect())
-                .unwrap_or_default();
-            (code, path)
-        }).collect();
+        let mut expected: Vec<_> = expected_errors
+            .iter()
+            .map(|e| {
+                let code = e["code"].as_str().unwrap().to_string();
+                let path: Vec<String> = e
+                    .get("path")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|v| v.as_str().unwrap().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (code, path)
+            })
+            .collect();
         expected.sort();
 
         for (i, (actual_entry, expected_entry)) in actual.iter().zip(expected.iter()).enumerate() {
@@ -158,7 +179,8 @@ fn test_fixture_refs() {
         assert!(
             result.errors.is_empty(),
             "Fixture '{}': parse errors: {:?}",
-            name, result.errors
+            name,
+            result.errors
         );
 
         let errors = validate_references(&result.value);
@@ -167,20 +189,33 @@ fn test_fixture_refs() {
             errors.len(),
             expected_errors.len(),
             "Fixture '{}': error count mismatch — got {}, expected {}",
-            name, errors.len(), expected_errors.len()
+            name,
+            errors.len(),
+            expected_errors.len()
         );
 
         // Sort both by (code, path) for stable comparison
-        let mut actual: Vec<_> = errors.iter().map(|e| (e.code.to_string(), e.path.clone())).collect();
+        let mut actual: Vec<_> = errors
+            .iter()
+            .map(|e| (e.code.to_string(), e.path.clone()))
+            .collect();
         actual.sort();
-        let mut expected: Vec<_> = expected_errors.iter().map(|e| {
-            let code = e["code"].as_str().unwrap().to_string();
-            let path: Vec<String> = e.get("path")
-                .and_then(|p| p.as_array())
-                .map(|arr| arr.iter().map(|v| v.as_str().unwrap().to_string()).collect())
-                .unwrap_or_default();
-            (code, path)
-        }).collect();
+        let mut expected: Vec<_> = expected_errors
+            .iter()
+            .map(|e| {
+                let code = e["code"].as_str().unwrap().to_string();
+                let path: Vec<String> = e
+                    .get("path")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|v| v.as_str().unwrap().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (code, path)
+            })
+            .collect();
         expected.sort();
 
         for (i, (actual_entry, expected_entry)) in actual.iter().zip(expected.iter()).enumerate() {
@@ -218,17 +253,24 @@ fn test_fixture_session() {
                 "parse" => {
                     let input = step["input"].as_str().unwrap();
                     let result = crate::parse_motly(input, value);
-                    if step.get("expectErrors").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if step
+                        .get("expectErrors")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
                         assert!(
                             !result.errors.is_empty(),
                             "Fixture '{}': expected parse errors for '{}'",
-                            name, input
+                            name,
+                            input
                         );
                     } else {
                         assert!(
                             result.errors.is_empty(),
                             "Fixture '{}': unexpected parse errors for '{}': {:?}",
-                            name, input, result.errors
+                            name,
+                            input,
+                            result.errors
                         );
                     }
                     value = result.value;
@@ -239,7 +281,8 @@ fn test_fixture_session() {
                     assert!(
                         result.errors.is_empty(),
                         "Fixture '{}': schema parse errors: {:?}",
-                        name, result.errors
+                        name,
+                        result.errors
                     );
                     schema = Some(result.value);
                 }
@@ -261,7 +304,9 @@ fn test_fixture_session() {
                         Some(s) => validate_schema(&value, s),
                         None => Vec::new(),
                     };
-                    if let Some(expected_errors) = step.get("expectedErrors").and_then(|v| v.as_array()) {
+                    if let Some(expected_errors) =
+                        step.get("expectedErrors").and_then(|v| v.as_array())
+                    {
                         assert_eq!(
                             errors.len(),
                             expected_errors.len(),
@@ -281,7 +326,9 @@ fn test_fixture_session() {
                 }
                 "validateReferences" => {
                     let errors = validate_references(&value);
-                    if let Some(expected_errors) = step.get("expectedErrors").and_then(|v| v.as_array()) {
+                    if let Some(expected_errors) =
+                        step.get("expectedErrors").and_then(|v| v.as_array())
+                    {
                         assert_eq!(
                             errors.len(),
                             expected_errors.len(),
@@ -365,28 +412,36 @@ fn test_error_has_begin_end_positions() {
 
 #[test]
 fn test_json_simple() {
-    let json = crate::parse_motly("name=hello", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("name=hello", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["name"]["eq"], "hello");
 }
 
 #[test]
 fn test_json_link() {
-    let json = crate::parse_motly("ref=$target", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("ref=$target", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["ref"]["linkTo"], "$target");
 }
 
 #[test]
 fn test_json_deleted() {
-    let json = crate::parse_motly("-gone", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("-gone", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["gone"]["deleted"], true);
 }
 
 #[test]
 fn test_json_array() {
-    let json = crate::parse_motly("items=[a, b]", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("items=[a, b]", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     let items = &v["properties"]["items"];
     assert!(items["eq"].is_array());
@@ -396,30 +451,41 @@ fn test_json_array() {
 
 #[test]
 fn test_json_number() {
-    let json = crate::parse_motly("count=42", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("count=42", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["count"]["eq"], 42.0);
 }
 
 #[test]
 fn test_json_boolean() {
-    let json = crate::parse_motly("active=@true", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("active=@true", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["active"]["eq"], true);
 }
 
 #[test]
 fn test_json_date() {
-    let json = crate::parse_motly("created=@2024-01-15", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("created=@2024-01-15", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["properties"]["created"]["eq"], "2024-01-15");
 }
 
 #[test]
 fn test_json_nested() {
-    let json = crate::parse_motly("a { b { c=1 } }", MOTLYValue::new()).value.to_json();
+    let json = crate::parse_motly("a { b { c=1 } }", MOTLYValue::new())
+        .value
+        .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["properties"]["a"]["properties"]["b"]["properties"]["c"]["eq"], 1.0);
+    assert_eq!(
+        v["properties"]["a"]["properties"]["b"]["properties"]["c"]["eq"],
+        1.0
+    );
 }
 
 // ── K8s deployment: real-world schema validation ────────────────────
@@ -459,7 +525,11 @@ fn test_k8s_sample_validates_against_schema() {
         errors.is_empty(),
         "K8s sample failed to validate against schema ({} errors):\n{}",
         errors.len(),
-        errors.iter().map(|e| format!("  [{}] {} at /{}", e.code, e.message, e.path.join("/"))).collect::<Vec<_>>().join("\n")
+        errors
+            .iter()
+            .map(|e| format!("  [{}] {} at /{}", e.code, e.message, e.path.join("/")))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -470,9 +540,15 @@ fn test_k8s_missing_required_fields() {
     assert!(schema.errors.is_empty());
     let tag = crate::parse_motly("apiVersion=\"apps/v1\"", MOTLYValue::new());
     let errors = validate_schema(&tag.value, &schema.value);
-    assert!(errors.iter().any(|e| e.code == "missing-required" && e.path == vec!["kind"]));
-    assert!(errors.iter().any(|e| e.code == "missing-required" && e.path == vec!["metadata"]));
-    assert!(errors.iter().any(|e| e.code == "missing-required" && e.path == vec!["spec"]));
+    assert!(errors
+        .iter()
+        .any(|e| e.code == "missing-required" && e.path == vec!["kind"]));
+    assert!(errors
+        .iter()
+        .any(|e| e.code == "missing-required" && e.path == vec!["metadata"]));
+    assert!(errors
+        .iter()
+        .any(|e| e.code == "missing-required" && e.path == vec!["spec"]));
 }
 
 #[test]
@@ -487,7 +563,9 @@ fn test_k8s_wrong_kind_enum() {
     assert!(tag.errors.is_empty());
     let errors = validate_schema(&tag.value, &schema.value);
     assert!(
-        errors.iter().any(|e| e.code == "invalid-enum-value" && e.path == vec!["kind"]),
+        errors
+            .iter()
+            .any(|e| e.code == "invalid-enum-value" && e.path == vec!["kind"]),
         "Expected invalid-enum-value for kind, got: {:?}",
         errors
     );

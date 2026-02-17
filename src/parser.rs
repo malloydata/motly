@@ -12,11 +12,11 @@ pub fn parse(input: &str) -> Result<Vec<Statement>, MOTLYError> {
     let mut parser = Parser { input, pos: 0 };
     let mut statements = Vec::new();
 
-    parser.skip_ws();
+    parser.skip_ws_and_commas();
     while parser.pos < parser.input.len() {
         let stmt = parser.parse_statement()?;
         statements.push(stmt);
-        parser.skip_ws();
+        parser.skip_ws_and_commas();
     }
 
     Ok(statements)
@@ -105,6 +105,17 @@ impl<'a> Parser<'a> {
             } else {
                 break;
             }
+        }
+    }
+
+    /// Like `skip_ws`, but also eats commas. Used in statement-list
+    /// contexts (top-level document and properties blocks) so commas
+    /// can serve as optional separators between statements.
+    fn skip_ws_and_commas(&mut self) {
+        self.skip_ws();
+        while self.peek_char() == Some(',') {
+            self.advance(1);
+            self.skip_ws();
         }
     }
 
@@ -398,10 +409,8 @@ impl<'a> Parser<'a> {
                         }
                     }
                     if self.pos == frac_start {
-                        return Err(self.error_span(
-                            "Expected fractional digits in date".to_string(),
-                            begin,
-                        ));
+                        return Err(self
+                            .error_span("Expected fractional digits in date".to_string(), begin));
                     }
                 }
             }
@@ -431,9 +440,7 @@ impl<'a> Parser<'a> {
         for _ in 0..count {
             match self.peek_char() {
                 Some(ch) if ch.is_ascii_digit() => self.advance(1),
-                _ => {
-                    return Err(self.error_span("Expected digit".to_string(), begin))
-                }
+                _ => return Err(self.error_span("Expected digit".to_string(), begin)),
             }
         }
         Ok(())
@@ -508,10 +515,7 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.pos == exp_start {
-                return Err(self.error_span(
-                    "Expected exponent digits".to_string(),
-                    begin,
-                ));
+                return Err(self.error_span("Expected exponent digits".to_string(), begin));
             }
         }
 
@@ -530,9 +534,9 @@ impl<'a> Parser<'a> {
 
         let num_str = &self.input[digit_start..self.pos];
         let full_str = &self.input[start..self.pos];
-        let n: f64 = full_str.parse().map_err(|_| {
-            self.error_span(format!("Invalid number: {}", num_str), begin)
-        })?;
+        let n: f64 = full_str
+            .parse()
+            .map_err(|_| self.error_span(format!("Invalid number: {}", num_str), begin))?;
 
         Ok(TagValue::Scalar(ScalarValue::Number(n)))
     }
@@ -592,17 +596,14 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.pos == exp_start {
-                return Err(self.error_span(
-                    "Expected exponent digits".to_string(),
-                    begin,
-                ));
+                return Err(self.error_span("Expected exponent digits".to_string(), begin));
             }
         }
 
         let full_str = &self.input[start..self.pos];
-        let n: f64 = full_str.parse().map_err(|_| {
-            self.error_span(format!("Invalid number: {}", full_str), begin)
-        })?;
+        let n: f64 = full_str
+            .parse()
+            .map_err(|_| self.error_span(format!("Invalid number: {}", full_str), begin))?;
 
         Ok(TagValue::Scalar(ScalarValue::Number(n)))
     }
@@ -631,10 +632,7 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek_char() {
                 None | Some('\r') | Some('\n') => {
-                    return Err(self.error_span(
-                        "Unterminated string".to_string(),
-                        begin,
-                    ));
+                    return Err(self.error_span("Unterminated string".to_string(), begin));
                 }
                 Some('"') => {
                     self.advance(1);
@@ -664,10 +662,7 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek_char() {
                 None | Some('\r') | Some('\n') => {
-                    return Err(self.error_span(
-                        "Unterminated string".to_string(),
-                        begin,
-                    ));
+                    return Err(self.error_span("Unterminated string".to_string(), begin));
                 }
                 Some('\'') => {
                     self.advance(1);
@@ -679,10 +674,7 @@ impl<'a> Parser<'a> {
                     // Pair with the next character (kept literally)
                     match self.peek_char() {
                         None | Some('\r') | Some('\n') => {
-                            return Err(self.error_span(
-                                "Unterminated string".to_string(),
-                                begin,
-                            ));
+                            return Err(self.error_span("Unterminated string".to_string(), begin));
                         }
                         Some(ch) => {
                             self.advance(ch.len_utf8());
@@ -753,10 +745,7 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek_char() {
                 None | Some('\r') | Some('\n') => {
-                    return Err(self.error_span(
-                        "Unterminated backtick string".to_string(),
-                        begin,
-                    ));
+                    return Err(self.error_span("Unterminated backtick string".to_string(), begin));
                 }
                 Some('`') => {
                     self.advance(1);
@@ -790,10 +779,9 @@ impl<'a> Parser<'a> {
             }
             match self.peek_char() {
                 None => {
-                    return Err(self.error_span(
-                        "Unterminated triple-quoted string".to_string(),
-                        begin,
-                    ));
+                    return Err(
+                        self.error_span("Unterminated triple-quoted string".to_string(), begin)
+                    );
                 }
                 Some('\\') => {
                     self.advance(1);
@@ -839,10 +827,8 @@ impl<'a> Parser<'a> {
                     match self.peek_char() {
                         Some(ch) if ch.is_ascii_hexdigit() => self.advance(1),
                         _ => {
-                            return Err(self.error_span(
-                                "Expected 4 hex digits in \\uXXXX".to_string(),
-                                begin,
-                            ))
+                            return Err(self
+                                .error_span("Expected 4 hex digits in \\uXXXX".to_string(), begin))
                         }
                     }
                 }
@@ -852,10 +838,10 @@ impl<'a> Parser<'a> {
                 })?;
                 match char::from_u32(code_point) {
                     Some(ch) => Ok(ch.to_string()),
-                    None => Err(self.error_span(
-                        format!("Invalid unicode code point: \\u{}", hex),
-                        begin,
-                    )),
+                    None => {
+                        Err(self
+                            .error_span(format!("Invalid unicode code point: \\u{}", hex), begin))
+                    }
                 }
             }
             Some(ch) => {
@@ -896,14 +882,9 @@ impl<'a> Parser<'a> {
                 let el = self.parse_array_element()?;
                 elements.push(el);
             } else if self.pos >= self.input.len() {
-                return Err(self.error_span(
-                    "Unclosed '['".to_string(),
-                    begin,
-                ));
+                return Err(self.error_span("Unclosed '['".to_string(), begin));
             } else {
-                return Err(self.error_point(
-                    "Expected ',' or ']' in array".to_string(),
-                ));
+                return Err(self.error_point("Expected ',' or ']' in array".to_string()));
             }
         }
     }
@@ -965,7 +946,7 @@ impl<'a> Parser<'a> {
 
         let mut stmts = Vec::new();
         loop {
-            self.skip_ws();
+            self.skip_ws_and_commas();
             if self.eat_char('}') {
                 return Ok(stmts);
             }

@@ -601,7 +601,10 @@ mod tests {
         // Simulate JSON that a TS consumer might send
         let json = r#"{"eq":"hello","properties":{"sub":{"eq":42}}}"#;
         let v = from_json(json).unwrap();
-        assert_eq!(v.eq, Some(EqValue::Scalar(Scalar::String("hello".to_string()))));
+        assert_eq!(
+            v.eq,
+            Some(EqValue::Scalar(Scalar::String("hello".to_string())))
+        );
         let props = v.properties.unwrap();
         let sub = match props.get("sub").unwrap() {
             MOTLYNode::Value(n) => n,

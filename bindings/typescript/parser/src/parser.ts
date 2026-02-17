@@ -105,14 +105,27 @@ class Parser {
     }
   }
 
+  /**
+   * Like `skipWs`, but also eats commas. Used in statement-list
+   * contexts (top-level document and properties blocks) so commas
+   * can serve as optional separators between statements.
+   */
+  private skipWsAndCommas(): void {
+    this.skipWs();
+    while (this.peekChar() === ",") {
+      this.advance(1);
+      this.skipWs();
+    }
+  }
+
   // ── Statement Dispatch ──────────────────────────────────────────
 
   parseStatements(): Statement[] {
     const statements: Statement[] = [];
-    this.skipWs();
+    this.skipWsAndCommas();
     while (this.pos < this.input.length) {
       statements.push(this.parseStatement());
-      this.skipWs();
+      this.skipWsAndCommas();
     }
     return statements;
   }
@@ -889,7 +902,7 @@ class Parser {
 
     const stmts: Statement[] = [];
     for (;;) {
-      this.skipWs();
+      this.skipWsAndCommas();
       if (this.eatChar("}")) return stmts;
       if (this.pos >= this.input.length) {
         throw this.errorSpan("Unclosed '{'", begin);

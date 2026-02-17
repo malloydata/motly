@@ -100,5 +100,15 @@
   {"name": "triple single backslash before delimiter", "input": "x='''\\''''", "expected": {"properties": {"x": {"eq": "\\'"}}}},
   {"name": "triple single double backslash then close", "input": "x='''\\\\'''", "expected": {"properties": {"x": {"eq": "\\\\"}}}},
   {"name": "raw single quote regex", "input": "pattern='^\\d+\\.\\d+\\.\\d+$'", "expected": {"properties": {"pattern": {"eq": "^\\d+\\.\\d+\\.\\d+$"}}}},
-  {"name": "comment after statement multiline", "input": "a=1 # comment\nb=2", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}}
+  {"name": "comment after statement multiline", "input": "a=1 # comment\nb=2", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}},
+
+  {"name": "comma between top-level statements", "input": "a=1, b=2", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}},
+  {"name": "comma between properties in block", "input": "x{ a=1, b=2 }", "expected": {"properties": {"x": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}}}},
+  {"name": "trailing comma in block", "input": "x{ a=1, b=2, }", "expected": {"properties": {"x": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}}}},
+  {"name": "leading commas", "input": ",,,a=1", "expected": {"properties": {"a": {"eq": 1}}}},
+  {"name": "multiple commas between statements", "input": "a=1,,,b=2", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}},
+  {"name": "commas with whitespace", "input": "a=1 , , b=2", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}}}},
+  {"name": "comma only input", "input": ",,,", "expected": {}},
+  {"name": "commas in block with flags", "input": "x{ a, b, c }", "expected": {"properties": {"x": {"properties": {"a": {}, "b": {}, "c": {}}}}}},
+  {"name": "commas in eq-replace block", "input": "a = { x=1, y=2 }", "expected": {"properties": {"a": {"properties": {"x": {"eq": 1}, "y": {"eq": 2}}}}}}
 ]
