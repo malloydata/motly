@@ -4,7 +4,9 @@ export type ScalarValue =
   | { kind: "number"; value: number }
   | { kind: "boolean"; value: boolean }
   | { kind: "date"; value: string }
-  | { kind: "reference"; ups: number; path: RefPathSegment[] };
+  | { kind: "reference"; ups: number; path: RefPathSegment[] }
+  | { kind: "none" }
+  | { kind: "env"; name: string };
 
 /** A segment in a reference path: either a named property or an array index. */
 export type RefPathSegment =
@@ -29,13 +31,17 @@ export type Statement =
       path: string[];
       value: TagValue;
       properties: Statement[] | null;
-      preserveProperties: boolean;
+    }
+  | {
+      kind: "assignBoth";
+      path: string[];
+      value: TagValue;
+      properties: Statement[] | null;
     }
   | {
       kind: "replaceProperties";
       path: string[];
       properties: Statement[];
-      preserveValue: boolean;
     }
   | {
       kind: "updateProperties";

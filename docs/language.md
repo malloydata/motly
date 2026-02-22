@@ -56,6 +56,34 @@ regex_block = '''
 '''
 ```
 
+**Heredoc strings** (`<<<...>>>`) span multiple lines with raw semantics. The indentation of the first non-empty line sets the baseline — that amount of leading whitespace is stripped from all subsequent lines. This makes heredocs clean to use inside nested configuration without artificial left-alignment:
+
+```motly
+server: {
+  database: {
+    setupSQL = <<<
+      SET search_path TO analytics;
+      CREATE TEMP TABLE foo
+        AS SELECT 1;
+    >>>
+  }
+}
+# setupSQL value is:
+#   SET search_path TO analytics;
+#   CREATE TEMP TABLE foo
+#     AS SELECT 1;
+```
+
+Heredocs are useful for embedding large blocks of content like SQL, templates, or other languages where you don't want to worry about quote characters or indentation fighting your config structure:
+
+```motly
+template = <<<
+  Dear {{name}},
+  Your order #{{id}} has been shipped.
+  Path: C:\Users\docs\receipt.txt
+>>>
+```
+
 **Backtick-quoted strings** (`` `...` ``) are used for property names that contain characters not allowed in bare strings. They support escape sequences:
 
 ```motly
@@ -85,6 +113,15 @@ Booleans use the `@` prefix to avoid ambiguity with bare strings:
 ```motly
 enabled = @true
 debug = @false
+```
+
+### None
+
+The `@none` literal represents the absence of a value. It is used to clear the value slot of a node:
+
+```motly
+name = hello
+name = @none   # name now has no value (but its properties, if any, are untouched)
 ```
 
 ### Dates
@@ -150,20 +187,130 @@ items = [
 ]
 ```
 
-## Objects
+## Nodes, Values, and Properties
 
-### Basic Nesting
+Every named entry in MOTLY is a **node**. A node has two independent aspects:
 
-Objects are created with colon and braces:
+- A **value** — a scalar (string, number, boolean, date, `@none`, or reference)
+- **Properties** — a map of child nodes
+
+This dual nature reflects how humans naturally think about things. A font isn't a bag of attributes with a `family` field — it *is* Helvetica, and it *has* properties:
 
 ```motly
-server: {
-  host = localhost
-  port = 8080
-}
+font = Helvetica { size = 14  weight = bold }
 ```
 
-### Deep Path Notation
+In JSON you'd write `{"font": {"family": "Helvetica", "size": 14, "weight": "bold"}}` — burying the most important fact inside a property. MOTLY lets the primary identity of a thing be its value, with properties as secondary detail. Configuration is for humans, and humans say "the font is Helvetica" not "the font has a family field whose value is Helvetica."
+
+These two aspects are controlled independently by different operators. Understanding this separation is the key to understanding MOTLY's assignment syntax.
+
+## The Three Core Operators
+
+MOTLY has three assignment operators. Each controls a different combination of a node's value and properties:
+
+- **`=`** operates **only on the value slot**. It never touches properties.
+- **`:`** operates **only on the properties slot**. It never touches the value.
+- **`:=`** operates on **both** simultaneously.
+
+## The Assignment Matrix
+
+Every combination of value and property manipulation is covered by a simple, orthogonal set of gestures:
+
+| | Assign value | Keep value | Remove value |
+|---|---|---|---|
+| **Keep properties** | `name = val` | `name` | `name = @none` |
+| **Merge properties** | `name = val { }` | `name { }` | `name = @none { }` |
+| **Replace properties** | `name := val { }` | `name: { }` | `name := @none { }` |
+
+The operators compose predictably:
+
+- Need to change just the value? Use `=`.
+- Need to change just the properties? Use `:` or space-before-brace.
+- Need to change both? Use `:=`.
+- Need to clear the value? Assign `@none`.
+
+### Example: Assigning Values with `=`
+
+The `=` operator sets the value of a node without affecting its properties:
+
+```motly
+port = 8080
+name = hello
+enabled = @true
+```
+
+If the node already has properties, they are preserved:
+
+```motly
+server = webhost { port = 8080  ssl = @true }
+
+# Change the value, properties are untouched
+server = apphost
+
+# Result: server is "apphost" with properties { port = 8080, ssl = @true }
+```
+
+### Example: Assigning Values and Merging Properties with `= val { }`
+
+When `=` is followed by a value and then braces, the value is assigned and the properties in the braces are **merged** with any existing properties:
+
+```motly
+server = webhost { port = 8080 }
+
+# Assign new value and merge additional properties
+server = apphost { ssl = @true }
+
+# Result: server is "apphost" with properties { port = 8080, ssl = @true }
+```
+
+### Example: Replacing Properties with `:`
+
+The colon operator replaces all properties on a node without affecting its value:
+
+```motly
+server: { host = localhost  port = 8080 }
+
+# This REPLACES everything in server
+server: { url = "http://example.com" }
+
+# Result: server only has url (host and port are gone)
+```
+
+### Example: Merging Properties with Space-Before-Brace
+
+A name followed by braces (no operator) merges with existing properties:
+
+```motly
+server: { host = localhost }
+
+# This ADDS to server
+server { port = 8080 }
+
+# Result: server has both host and port
+```
+
+### Example: Assigning Both with `:=`
+
+The `:=` operator assigns the value **and** replaces properties in a single gesture:
+
+```motly
+name := car { color = red  year = 2024 }
+```
+
+This sets the value to `car` and replaces all properties with `{ color = red  year = 2024 }`. An optional trailing `{ }` block after `:=` **merges** overrides on top of the replaced properties (see "Cloning with `:=`" under References).
+
+### Summary: Replace vs. Merge
+
+Replace is the normal mode for defining configuration — you're stating the complete set of properties. Merge is useful when extending or overriding configuration from multiple sources, or when a session accumulates statements incrementally.
+
+| Syntax | Properties behavior |
+|--------|---|
+| `name: { }` | Replace |
+| `name { }` | Merge |
+| `name := val { }` | Replace (then merge if trailing `{ }`) |
+| `name = val { }` | Merge |
+
+## Deep Path Notation
 
 Use dot notation to set deeply nested values without nesting braces:
 
@@ -185,44 +332,6 @@ database: {
     timeout = 5000
   }
 }
-```
-
-### Replace vs Merge
-
-This is a key MOTLY concept. There are two ways to set properties on a name, and they differ in how they interact with existing data:
-
-**Colon syntax (`: { }`) replaces all properties:**
-
-```motly
-server: { host = localhost  port = 8080 }
-
-# This REPLACES everything in server
-server: { url = "http://example.com" }
-
-# Result: server only has url (host and port are gone)
-```
-
-**Space syntax (`{ }`) merges with existing properties:**
-
-```motly
-server: { host = localhost }
-
-# This ADDS to server (merge)
-server { port = 8080 }
-
-# Result: server has both host and port
-```
-
-Replace is the normal mode for defining configuration. Merge is useful when extending or overriding configuration from multiple sources, or when a session accumulates statements incrementally.
-
-### Equals-with-braces Syntax
-
-When `=` is followed by braces, it also replaces properties (like `:`):
-
-```motly
-# These are equivalent:
-name: { a = 1 }
-name = { a = 1 }
 ```
 
 ## Deletion
@@ -251,32 +360,6 @@ config: {
 
 # Remove everything
 config { -... }
-```
-
-## Preserve Semantics
-
-MOTLY provides syntax for selectively preserving a node's value or properties during an update.
-
-**Preserve value** (`= ... { }`): replaces the properties but keeps the existing scalar value:
-
-```motly
-name = hello { color = red }
-
-# Replace properties but keep the value "hello"
-name = ... { color = blue  size = 10 }
-
-# Result: name is "hello" with properties { color = blue, size = 10 }
-```
-
-**Preserve properties** (`= val { ... }`): changes the scalar value but keeps existing properties:
-
-```motly
-name = hello { color = red  size = 10 }
-
-# Change value to "world" but keep properties
-name = world { ... }
-
-# Result: name is "world" with properties { color = red, size = 10 }
 ```
 
 ## Flags (Define)
@@ -348,6 +431,68 @@ users = [
 primary_user = $users[0].name
 ```
 
+### References with `=` (Pointers)
+
+When used with `=`, a reference creates a **pointer** — a live link to another node:
+
+```motly
+name = $ref              # value becomes a pointer to ref. Properties untouched.
+name = $ref { color = red }  # value becomes a pointer to ref. Merge these properties.
+```
+
+### Cloning with `:=` (Copy)
+
+When used with `:=`, a reference is **dereferenced and cloned** — the value and entire property subtree are copied into the target:
+
+```motly
+name := $ref             # clone ref's value AND properties into name
+name := $ref { color = red } # clone everything from ref, then merge overrides
+```
+
+The difference between `= $ref` and `:= $ref` is the difference between "point at it" and "copy it."
+
+This is especially useful for configuration modes, where a mode starts as a copy of a base config and then overrides specific values:
+
+```motly
+connections: {
+  cache: { host = redis.internal  port = 6379 }
+  db: { host = localhost  port = 5432  username = dev }
+}
+
+modes: {
+  staging := $connections {
+    db { host = staging-db.internal  username = staging_svc }
+  }
+  production := $connections {
+    db { host = prod-db.internal  username = prod_svc }
+  }
+}
+```
+
+Loading `modes.staging` yields a complete connection map with both `cache` (cloned from the base) and `db` (cloned then overridden).
+
+### Clone Boundary Rule
+
+When `:=` clones a subtree, all references within the cloned subtree must resolve within the subtree itself. If a relative reference would resolve to a node outside the cloned subtree, that is a compile error.
+
+A clone is always a self-contained snapshot. If you need to refer to something outside the subtree, use a concrete value rather than a relative reference that escapes the clone boundary.
+
+```motly
+# OK — internal reference resolves within the cloned subtree
+base: {
+  shared_host = "db.internal"
+  primary: { host = $^shared_host }
+}
+copy := $base   # works: $^shared_host resolves within base
+
+# ERROR — relative reference escapes the clone boundary
+root_setting = important
+other: {
+  val = $^^root_setting   # points outside other
+}
+copy := $other   # error: $^^root_setting resolves outside the cloned subtree
+```
+
 ## Comments
 
 Line comments start with `#`. Everything from `#` to the end of the line is ignored:
@@ -363,6 +508,8 @@ server: {
 There are no block comments.
 
 ## Schema Directive
+
+> **Note:** Schema validation is planned for a future version of MOTLY. The syntax below describes the intended convention for declaring schemas. It is documented here to establish the design direction, but tooling support is not yet implemented.
 
 A MOTLY file can declare its schema on the first line using the `#!` convention:
 
@@ -391,124 +538,34 @@ Use the `x-` prefix for organization-specific schema codes (e.g., `x-acme-deploy
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `key = value` | Assign a value | `port = 8080` |
-| `key: { ... }` | Object (replace) | `server: { host = localhost }` |
-| `key { ... }` | Object (merge) | `server { port = 8080 }` |
+| `key = value` | Assign value (keep props) | `port = 8080` |
+| `key = val { }` | Assign value, merge props | `server = web { port = 80 }` |
+| `key: { ... }` | Replace properties (keep value) | `server: { host = localhost }` |
+| `key { ... }` | Merge properties (keep value) | `server { port = 8080 }` |
+| `key := val { }` | Assign value, replace props | `server := web { port = 80 }` |
+| `key = @none` | Remove value (keep props) | `name = @none` |
 | `key = [a, b]` | Array | `ports = [80, 443]` |
 | `key.sub = val` | Deep path | `db.pool.max = 10` |
 | `"quoted"` | Double-quoted string | `host = "my-app.com"` |
 | `'raw'` | Single-quoted raw string | `regex = 'foo\d+'` |
 | `"""multi"""` | Triple-quoted string | `desc = """..."""` |
 | `'''raw multi'''` | Triple-single-quoted raw string | `block = '''...\n...'''` |
+| `<<<...>>>` | Heredoc raw string (auto-dedent) | `sql = <<<SELECT 1;>>>` |
 | `` `backtick` `` | Quoted property name | `` `content-type` = json `` |
 | `@true` / `@false` | Boolean | `enabled = @true` |
+| `@none` | No value | `name = @none` |
 | `@2024-01-15` | Date | `created = @2024-01-15` |
 | `name` | Flag (define) | `hidden` |
 | `-key` | Delete property | `-deprecated_field` |
 | `-...` | Delete all properties | `-...` |
-| `= ... { }` | Preserve value | `n = ... { color = blue }` |
-| `= val { ... }` | Preserve properties | `n = world { ... }` |
 | `$path` | Reference (absolute) | `timeout = $defaults.timeout` |
 | `$^path` | Reference (relative) | `host = $^^server.host` |
 | `$arr[0]` | Reference with index | `first = $items[0]` |
+| `= $ref` | Reference (pointer) | `link = $other.node` |
+| `:= $ref` | Clone (copy) | `copy := $base` |
 | `# comment` | Line comment | `# This is a comment` |
 | `#! ...` | Schema directive | `#! schema=app url="..."` |
 
-## Grammar (EBNF)
+## Grammar
 
-Commas are optional separators between statements (at the top level and inside `{ }` blocks). They are treated as whitespace in those contexts. In arrays, commas remain required element separators.
-
-```ebnf
-(* Entry point — commas are optional separators between statements *)
-document        ::= statementList
-statementList   ::= { "," } { statement { "," } }
-
-(* Statements *)
-statement       ::= assignment
-                  | replaceProps
-                  | updateProps
-                  | clearAll
-                  | definition
-
-assignment      ::= propName "=" value [ properties ]
-replaceProps    ::= propName ":" properties
-                  | propName "=" [ "..." ] properties
-updateProps     ::= propName properties
-definition      ::= [ "-" ] propName
-clearAll        ::= "-..."
-
-(* Property paths *)
-propName        ::= identifier { "." identifier }
-
-(* Values *)
-value           ::= array | boolean | date | number | string | reference
-
-boolean         ::= "@true" | "@false"
-date            ::= "@" isoDate
-number          ::= [ "-" ] digits [ "." digits ] [ exponent ]
-                  | [ "-" ] "." digits [ exponent ]
-string          ::= tripleString | tripleSingleString | sqString | dqString | bareString
-reference       ::= "$" { "^" } refPath
-refPath         ::= refElement { "." refElement }
-refElement      ::= identifier [ "[" digits "]" ]
-
-exponent        ::= ( "e" | "E" ) [ "+" | "-" ] digits
-digits          ::= digit { digit }
-digit           ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
-
-(* ISO 8601 date/datetime *)
-isoDate         ::= year "-" month "-" day [ "T" time [ timezone ] ]
-time            ::= hour ":" minute [ ":" second [ "." fraction ] ]
-timezone        ::= "Z" | ( "+" | "-" ) hour [ ":" ] minute
-year            ::= digit digit digit digit
-month           ::= digit digit
-day             ::= digit digit
-hour            ::= digit digit
-minute          ::= digit digit
-second          ::= digit digit
-fraction        ::= digits
-
-(* Arrays *)
-array           ::= "[" [ arrayElements ] "]"
-arrayElements   ::= arrayElement { "," arrayElement } [ "," ]
-arrayElement    ::= scalarValue [ properties ]
-                  | properties
-                  | array
-
-scalarValue     ::= boolean | date | number | string
-
-(* Properties block *)
-properties      ::= "{" statementList "}"
-                  | "{" "..." "}"
-
-(* Identifiers — for property names *)
-identifier      ::= bqString | bareString
-
-(* String literals *)
-bareString      ::= bareChar { bareChar }
-bareChar        ::= letter | digit | "_"
-letter          ::= "A"-"Z" | "a"-"z" | extendedLatin
-extendedLatin   ::= (* Unicode: U+00C0–U+024F, U+1E00–U+1EFF *)
-
-tripleString    ::= '"""' { tripleChar } '"""'
-tripleChar      ::= (* any character except unescaped """, or escape sequence *)
-
-tripleSingleString ::= "'''" { tripleSingleChar } "'''"
-tripleSingleChar   ::= (* any character; backslash pairs with next char; only ''' closes *)
-
-dqString        ::= '"' { dqChar } '"'
-dqChar          ::= (* any character except ", \, newline, or escape sequence *)
-
-sqString        ::= "'" { sqChar } "'"
-sqChar          ::= (* any character except ', newline; backslash pairs with next char literally *)
-
-bqString        ::= "`" { bqChar } "`"
-bqChar          ::= (* any character except `, \, newline, or escape sequence *)
-
-(* Escape sequences (dqString, tripleString, bqString): \b \f \n \r \t \uXXXX \char *)
-(* Raw strings (sqString, tripleSingleString): backslash is literal but pairs with next char *)
-
-(* Whitespace and comments — allowed between tokens *)
-whitespace      ::= " " | "\t" | "\r" | "\n"
-comment         ::= "#" { (* any char except newline *) } newline
-```
+The formal EBNF grammar is maintained in a separate file: [motly-grammar.md](motly-grammar.md).

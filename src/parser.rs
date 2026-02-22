@@ -142,78 +142,59 @@ impl<'a> Parser<'a> {
         let path = self.parse_prop_name()?;
         self.skip_ws();
 
+        // Check := FIRST (before : alone)
+        if self.starts_with(":=") {
+            self.advance(2);
+            self.skip_ws();
+
+            // := requires a value
+            let value = self.parse_eq_value(true)?;
+            self.skip_ws();
+
+            // Optional { props } block
+            let properties = if self.peek_char() == Some('{') {
+                Some(self.parse_properties_block()?)
+            } else {
+                None
+            };
+
+            return Ok(Statement::AssignBoth {
+                path,
+                value,
+                properties,
+            });
+        }
+
         match self.peek_char() {
             Some('=') => {
+                let eq_begin = self.position();
                 self.advance(1);
                 self.skip_ws();
 
-                // Check for `= ... {` (replaceProperties with preserveValue)
-                if self.starts_with("...") {
-                    let saved = self.pos;
-                    self.advance(3);
-                    self.skip_ws();
-                    if self.peek_char() == Some('{') {
-                        let props = self.parse_properties_block()?;
-                        return Ok(Statement::ReplaceProperties {
-                            path,
-                            properties: props,
-                            preserve_value: true,
-                        });
-                    }
-                    self.pos = saved;
-                }
-
-                // Check for `= {` (replaceProperties without preserveValue)
+                // `= {` without a value is now a parse error
                 if self.peek_char() == Some('{') {
-                    let props = self.parse_properties_block()?;
-                    return Ok(Statement::ReplaceProperties {
-                        path,
-                        properties: props,
-                        preserve_value: false,
-                    });
+                    return Err(self.error_span(
+                        "Expected a value after '='; use ':' for property-only replacement"
+                            .to_string(),
+                        eq_begin,
+                    ));
                 }
 
                 // `= value` (setEq)
-                let value = self.parse_eq_value()?;
+                let value = self.parse_eq_value(true)?;
                 self.skip_ws();
 
-                // Optionally followed by `{ ... }` or `{ statements }`
-                if self.peek_char() == Some('{') {
-                    let saved = self.pos;
-                    self.advance(1);
-                    self.skip_ws();
-
-                    if self.starts_with("...") {
-                        let saved2 = self.pos;
-                        self.advance(3);
-                        self.skip_ws();
-                        if self.peek_char() == Some('}') {
-                            self.advance(1);
-                            return Ok(Statement::SetEq {
-                                path,
-                                value,
-                                properties: None,
-                                preserve_properties: true,
-                            });
-                        }
-                        self.pos = saved2;
-                    }
-
-                    self.pos = saved;
-                    let props = self.parse_properties_block()?;
-                    return Ok(Statement::SetEq {
-                        path,
-                        value,
-                        properties: Some(props),
-                        preserve_properties: false,
-                    });
-                }
+                // Optionally followed by `{ statements }` (MERGE semantics)
+                let properties = if self.peek_char() == Some('{') {
+                    Some(self.parse_properties_block()?)
+                } else {
+                    None
+                };
 
                 Ok(Statement::SetEq {
                     path,
                     value,
-                    properties: None,
-                    preserve_properties: false,
+                    properties,
                 })
             }
             Some(':') => {
@@ -223,7 +204,6 @@ impl<'a> Parser<'a> {
                 Ok(Statement::ReplaceProperties {
                     path,
                     properties: props,
-                    preserve_value: false,
                 })
             }
             Some('{') => {
@@ -263,9 +243,18 @@ impl<'a> Parser<'a> {
 
     // ── Values ──────────────────────────────────────────────────────
 
-    fn parse_eq_value(&mut self) -> Result<TagValue, MOTLYError> {
+    /// Parse a value (scalar or array). When `allow_arrays` is false,
+    /// arrays are not accepted (used in array element contexts).
+    fn parse_eq_value(&mut self, allow_arrays: bool) -> Result<TagValue, MOTLYError> {
+        // Heredoc strings
+        if self.starts_with("<<<") {
+            return self
+                .parse_heredoc()
+                .map(|s| TagValue::Scalar(ScalarValue::String(s)));
+        }
+
         match self.peek_char() {
-            Some('[') => self.parse_array().map(TagValue::Array),
+            Some('[') if allow_arrays => self.parse_array().map(TagValue::Array),
             Some('@') => self.parse_at_value().map(TagValue::Scalar),
             Some('$') => self.parse_reference().map(TagValue::Scalar),
             Some('"') => {
@@ -296,39 +285,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_scalar_value(&mut self) -> Result<TagValue, MOTLYError> {
-        match self.peek_char() {
-            Some('@') => self.parse_at_value().map(TagValue::Scalar),
-            Some('$') => self.parse_reference().map(TagValue::Scalar),
-            Some('"') => {
-                if self.starts_with("\"\"\"") {
-                    self.parse_triple_string()
-                        .map(|s| TagValue::Scalar(ScalarValue::String(s)))
-                } else {
-                    self.parse_double_quoted_string()
-                        .map(|s| TagValue::Scalar(ScalarValue::String(s)))
-                }
-            }
-            Some('\'') => {
-                if self.starts_with("'''") {
-                    self.parse_triple_single_quoted_string()
-                        .map(|s| TagValue::Scalar(ScalarValue::String(s)))
-                } else {
-                    self.parse_single_quoted_string()
-                        .map(|s| TagValue::Scalar(ScalarValue::String(s)))
-                }
-            }
-            Some(ch) if ch.is_ascii_digit() || ch == '.' || ch == '-' => {
-                self.parse_number_or_string()
-            }
-            Some(ch) if is_bare_char(ch) => self
-                .parse_bare_string()
-                .map(|s| TagValue::Scalar(ScalarValue::String(s))),
-            _ => Err(self.error_point("Expected a value".to_string())),
-        }
-    }
-
-    /// Parse `@true`, `@false`, or `@date`
+    /// Parse `@true`, `@false`, `@none`, `@env.IDENTIFIER`, or `@date`
     fn parse_at_value(&mut self) -> Result<ScalarValue, MOTLYError> {
         let begin = self.position();
         self.expect_char('@')?;
@@ -339,6 +296,15 @@ impl<'a> Parser<'a> {
         if self.starts_with("false") && !self.is_bare_char_at(5) {
             self.advance(5);
             return Ok(ScalarValue::Boolean(false));
+        }
+        if self.starts_with("none") && !self.is_bare_char_at(4) {
+            self.advance(4);
+            return Ok(ScalarValue::None);
+        }
+        if self.starts_with("env.") {
+            self.advance(4); // skip "env."
+            let name = self.parse_bare_string()?;
+            return Ok(ScalarValue::Env { name });
         }
         // Must start with a digit to be a date
         match self.peek_char() {
@@ -360,7 +326,7 @@ impl<'a> Parser<'a> {
                 };
                 Err(self.error_span(
                     format!(
-                        "Illegal constant @{}; expected @true, @false, or @date",
+                        "Illegal constant @{}; expected @true, @false, @none, @env.NAME, or @date",
                         token
                     ),
                     begin,
@@ -370,7 +336,7 @@ impl<'a> Parser<'a> {
     }
 
     fn is_bare_char_at(&self, offset: usize) -> bool {
-        self.remaining()
+        self.input[self.pos..]
             .chars()
             .nth(offset)
             .map_or(false, is_bare_char)
@@ -796,6 +762,104 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a heredoc string: `<<<` content `>>>` with indent stripping.
+    fn parse_heredoc(&mut self) -> Result<String, MOTLYError> {
+        let begin = self.position();
+        self.advance(3); // skip <<<
+
+        // Skip spaces/tabs on the same line (not newlines)
+        while let Some(ch) = self.peek_char() {
+            if ch == ' ' || ch == '\t' {
+                self.advance(1);
+            } else {
+                break;
+            }
+        }
+
+        // Expect \n (with optional preceding \r for CRLF)
+        if self.peek_char() == Some('\r') {
+            self.advance(1);
+        }
+        if self.peek_char() == Some('\n') {
+            self.advance(1);
+        } else {
+            return Err(self.error_span(
+                "Expected newline after <<<".to_string(),
+                begin,
+            ));
+        }
+
+        // Collect lines until we find >>> on its own line
+        let mut lines: Vec<String> = Vec::new();
+        loop {
+            if self.pos >= self.input.len() {
+                return Err(self.error_span(
+                    "Unterminated heredoc (expected >>>)".to_string(),
+                    begin,
+                ));
+            }
+
+            // Read one line (break only on \n)
+            let line_start = self.pos;
+            while self.pos < self.input.len() {
+                let ch = self.input[self.pos..].chars().next().unwrap();
+                if ch == '\n' {
+                    break;
+                }
+                self.advance(ch.len_utf8());
+            }
+            let mut line_end = self.pos;
+
+            // Strip trailing \r for CRLF compatibility
+            if line_end > line_start && self.input.as_bytes()[line_end - 1] == b'\r' {
+                line_end -= 1;
+            }
+            let line = &self.input[line_start..line_end];
+
+            // Consume the \n
+            if self.peek_char() == Some('\n') {
+                self.advance(1);
+            }
+
+            // Check if this line is the >>> terminator
+            let trimmed = line.trim();
+            if trimmed == ">>>" {
+                break;
+            }
+
+            lines.push(line.to_string());
+        }
+
+        if lines.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Determine strip amount from first line containing a non-space character
+        let strip = lines
+            .iter()
+            .find(|l| !l.trim_start().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .unwrap_or(0);
+
+        // Strip indentation and join
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            if line.trim_start().is_empty() {
+                // Whitespace-only lines become empty
+            } else if strip <= line.len() {
+                result.push_str(&line[strip..]);
+            } else {
+                result.push_str(line);
+            }
+        }
+        result.push('\n');
+
+        Ok(result)
+    }
+
     fn parse_escape_char(&mut self) -> Result<String, MOTLYError> {
         match self.peek_char() {
             None => Err(self.error_point("Unterminated escape sequence".to_string())),
@@ -908,7 +972,7 @@ impl<'a> Parser<'a> {
                 })
             }
             _ => {
-                let value = self.parse_scalar_value()?;
+                let value = self.parse_eq_value(false)?;
                 self.skip_ws();
                 if self.peek_char() == Some('{') {
                     let props = self.parse_properties_block()?;
@@ -932,17 +996,6 @@ impl<'a> Parser<'a> {
         let begin = self.position();
         self.expect_char('{')?;
         self.skip_ws();
-
-        if self.starts_with("...") {
-            let saved = self.pos;
-            self.advance(3);
-            self.skip_ws();
-            if self.peek_char() == Some('}') {
-                self.advance(1);
-                return Ok(Vec::new());
-            }
-            self.pos = saved;
-        }
 
         let mut stmts = Vec::new();
         loop {

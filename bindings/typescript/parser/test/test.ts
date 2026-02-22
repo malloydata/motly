@@ -4,9 +4,6 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   MOTLYSession,
-  MOTLYValue,
-  MOTLYNode,
-  MOTLYRef,
 } from "../build/index";
 
 // ── Fixture loading ─────────────────────────────────────────────
@@ -19,10 +16,6 @@ function loadFixtures<T>(name: string): T {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-function isRef(node: MOTLYNode): node is MOTLYRef {
-  return "linkTo" in node;
-}
 
 /** Convert $date objects in fixture expected values to Date objects. */
 function hydrateValue(v: any): any {
@@ -107,10 +100,14 @@ describe("Parse fixtures", () => {
         const errors = s.parse(fixture.input);
         if (fixture.expectErrors) {
           assert.ok(errors.length > 0, "Expected parse errors");
-          s.dispose();
-          return;
+          if (fixture.expected === undefined) {
+            s.dispose();
+            return;
+          }
+          // expectErrors + expected: errors are non-fatal, check the tree too
+        } else {
+          assert.deepStrictEqual(errors, [], `Unexpected parse errors: ${JSON.stringify(errors)}`);
         }
-        assert.deepStrictEqual(errors, [], `Unexpected parse errors: ${JSON.stringify(errors)}`);
       }
 
       if (fixture.expected !== undefined) {
@@ -162,8 +159,10 @@ describe("Schema fixtures", () => {
   for (const fixture of schemaFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
-      s.parseSchema(fixture.schema);
-      s.parse(fixture.input);
+      const schemaErrors = s.parseSchema(fixture.schema);
+      assert.deepStrictEqual(schemaErrors, [], `Schema parse errors: ${JSON.stringify(schemaErrors)}`);
+      const parseErrors = s.parse(fixture.input);
+      assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
       const errors = s.validateSchema();
 
       const sortedActual = sortErrors(errors);
@@ -203,7 +202,8 @@ describe("Reference fixtures", () => {
   for (const fixture of refFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
-      s.parse(fixture.input);
+      const parseErrors = s.parse(fixture.input);
+      assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
       const errors = s.validateReferences();
 
       const sortedActual = sortErrors(errors);

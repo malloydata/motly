@@ -7,6 +7,7 @@ import {
 import { parse } from "./parser";
 import { execute } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
+import { cloneValue } from "./clone";
 
 /**
  * A stateful MOTLY parsing session.
@@ -27,8 +28,8 @@ export class MOTLYSession {
     this.ensureAlive();
     try {
       const stmts = parse(source);
-      this.value = execute(stmts, this.value);
-      return [];
+      const errors = execute(stmts, this.value);
+      return errors;
     } catch (e) {
       if (isMotlyError(e)) return [e];
       throw e;
@@ -43,8 +44,10 @@ export class MOTLYSession {
     this.ensureAlive();
     try {
       const stmts = parse(source);
-      this.schema = execute(stmts, {});
-      return [];
+      const fresh: MOTLYValue = {};
+      const errors = execute(stmts, fresh);
+      this.schema = fresh;
+      return errors;
     } catch (e) {
       if (isMotlyError(e)) return [e];
       throw e;
@@ -64,7 +67,7 @@ export class MOTLYSession {
    */
   getValue(): MOTLYValue {
     this.ensureAlive();
-    return deepClone(this.value);
+    return cloneValue(this.value);
   }
 
   /**
@@ -111,35 +114,3 @@ function isMotlyError(e: unknown): e is MOTLYError {
   );
 }
 
-function deepClone(value: MOTLYValue): MOTLYValue {
-  const result: MOTLYValue = {};
-
-  if (value.deleted) result.deleted = true;
-
-  if (value.eq !== undefined) {
-    if (value.eq instanceof Date) {
-      result.eq = new Date(value.eq.getTime());
-    } else if (Array.isArray(value.eq)) {
-      result.eq = value.eq.map(cloneNode);
-    } else {
-      result.eq = value.eq;
-    }
-  }
-
-  if (value.properties) {
-    const props: Record<string, import("motly-ts-interface").MOTLYNode> = {};
-    for (const key of Object.keys(value.properties)) {
-      props[key] = cloneNode(value.properties[key]);
-    }
-    result.properties = props;
-  }
-
-  return result;
-}
-
-function cloneNode(node: import("motly-ts-interface").MOTLYNode): import("motly-ts-interface").MOTLYNode {
-  if ("linkTo" in node) {
-    return { linkTo: node.linkTo };
-  }
-  return deepClone(node);
-}

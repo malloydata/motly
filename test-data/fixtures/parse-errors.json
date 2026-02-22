@@ -10,5 +10,7 @@
   {"name": "unterminated triple single quoted", "input": "x = '''hello", "expectErrors": true},
   {"name": "raw single ending backslash unterminated", "input": "x='\\' ", "expectErrors": true},
   {"name": "raw single odd backslashes unterminated", "input": "x='\\\\\\' ", "expectErrors": true},
-  {"name": "triple single backslash eats delimiter unterminated", "input": "x='''\\'''", "expectErrors": true}
+  {"name": "triple single backslash eats delimiter unterminated", "input": "x='''\\'''", "expectErrors": true},
+  {"name": "equals followed by brace", "input": "name = {prop}", "expectErrors": true},
+  {"name": "unterminated heredoc", "input": "x = <<<\nhello", "expectErrors": true}
 ]

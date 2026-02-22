@@ -24,17 +24,33 @@ fn test_fixture_parse() {
     for fixture in &fixtures {
         let name = fixture["name"].as_str().unwrap();
         let input = &fixture["input"];
-        let expected = &fixture["expected"];
+        let expected = fixture.get("expected");
+        let expect_errors = fixture
+            .get("expectErrors")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let value = if let Some(input_str) = input.as_str() {
             // Single input string
             let result = crate::parse_motly(input_str, MOTLYValue::new());
-            assert!(
-                result.errors.is_empty(),
-                "Fixture '{}': unexpected parse errors: {:?}",
-                name,
-                result.errors
-            );
+            if expect_errors {
+                assert!(
+                    !result.errors.is_empty(),
+                    "Fixture '{}': expected parse errors but got none",
+                    name
+                );
+                if expected.is_none() || expected == Some(&serde_json::Value::Null) {
+                    continue;
+                }
+                // expectErrors + expected: errors are non-fatal, check the tree too
+            } else {
+                assert!(
+                    result.errors.is_empty(),
+                    "Fixture '{}': unexpected parse errors: {:?}",
+                    name,
+                    result.errors
+                );
+            }
             result.value
         } else if let Some(input_arr) = input.as_array() {
             // Array of inputs: accumulate
@@ -42,13 +58,15 @@ fn test_fixture_parse() {
             for chunk in input_arr {
                 let chunk_str = chunk.as_str().unwrap();
                 let result = crate::parse_motly(chunk_str, value);
-                assert!(
-                    result.errors.is_empty(),
-                    "Fixture '{}': unexpected parse errors on chunk '{}': {:?}",
-                    name,
-                    chunk_str,
-                    result.errors
-                );
+                if !expect_errors {
+                    assert!(
+                        result.errors.is_empty(),
+                        "Fixture '{}': unexpected parse errors on chunk '{}': {:?}",
+                        name,
+                        chunk_str,
+                        result.errors
+                    );
+                }
                 value = result.value;
             }
             value
@@ -56,12 +74,16 @@ fn test_fixture_parse() {
             panic!("Fixture '{}': input must be a string or array", name);
         };
 
-        let expected_value = fixture_expected_to_value(expected);
-        assert_eq!(
-            value, expected_value,
-            "Fixture '{}': value mismatch\n  Got:      {:?}\n  Expected: {:?}",
-            name, value, expected_value
-        );
+        if let Some(expected) = expected {
+            if !expected.is_null() {
+                let expected_value = fixture_expected_to_value(expected);
+                assert_eq!(
+                    value, expected_value,
+                    "Fixture '{}': value mismatch\n  Got:      {:?}\n  Expected: {:?}",
+                    name, value, expected_value
+                );
+            }
+        }
     }
 }
 
@@ -425,7 +447,8 @@ fn test_json_link() {
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["properties"]["ref"]["linkTo"], "$target");
+    // References now live in the eq slot as {"linkTo": "..."}
+    assert_eq!(v["properties"]["ref"]["eq"]["linkTo"], "$target");
 }
 
 #[test]

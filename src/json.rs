@@ -79,32 +79,34 @@ impl JsonWriter {
         self.buf.push('}');
     }
 
-    fn write_link(&mut self, link: &MOTLYRef) {
-        self.buf.push('{');
-        self.depth += 1;
-
-        let mut first = true;
-
-        self.entry_sep(&mut first);
-        self.write_key("linkTo");
-        self.write_string_value(&link.link_to);
-
-        self.depth -= 1;
-        self.newline();
-        self.buf.push('}');
-    }
-
-    fn write_value(&mut self, value: &MOTLYNode) {
-        match value {
-            MOTLYNode::Value(node) => self.write_node(node),
-            MOTLYNode::Ref(link) => self.write_link(link),
-        }
-    }
-
     fn write_eq(&mut self, eq: &EqValue) {
         match eq {
             EqValue::Scalar(scalar) => self.write_scalar(scalar),
             EqValue::Array(arr) => self.write_array(arr),
+            EqValue::Reference(link_to) => {
+                // Serialize as {"linkTo": "..."}
+                self.buf.push('{');
+                self.depth += 1;
+                let mut first = true;
+                self.entry_sep(&mut first);
+                self.write_key("linkTo");
+                self.write_string_value(link_to);
+                self.depth -= 1;
+                self.newline();
+                self.buf.push('}');
+            }
+            EqValue::EnvRef(name) => {
+                // Serialize as {"env": "..."}
+                self.buf.push('{');
+                self.depth += 1;
+                let mut first = true;
+                self.entry_sep(&mut first);
+                self.write_key("env");
+                self.write_string_value(name);
+                self.depth -= 1;
+                self.newline();
+                self.buf.push('}');
+            }
         }
     }
 
@@ -147,7 +149,7 @@ impl JsonWriter {
                 self.buf.push(',');
             }
             self.newline();
-            self.write_value(item);
+            self.write_node(item);
         }
 
         self.depth -= 1;
@@ -165,7 +167,7 @@ impl JsonWriter {
         for (key, value) in props {
             self.entry_sep(&mut first);
             self.write_key(key);
-            self.write_value(value);
+            self.write_node(value);
         }
 
         self.depth -= 1;

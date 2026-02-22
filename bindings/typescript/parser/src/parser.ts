@@ -24,10 +24,6 @@ class Parser {
 
   // ── Helpers ──────────────────────────────────────────────────────
 
-  private remaining(): string {
-    return this.input.substring(this.pos);
-  }
-
   private peekChar(): string | undefined {
     return this.pos < this.input.length ? this.input[this.pos] : undefined;
   }
@@ -150,95 +146,48 @@ class Parser {
 
     const ch = this.peekChar();
 
+    // Check := first (MUST check before : alone)
+    if (ch === ":" && this.startsWith(":=")) {
+      this.advance(2);
+      this.skipWs();
+      const value = this.parseEqValue();
+      this.skipWs();
+      if (this.peekChar() === "{") {
+        const props = this.parsePropertiesBlock();
+        return { kind: "assignBoth", path, value, properties: props };
+      }
+      return { kind: "assignBoth", path, value, properties: null };
+    }
+
     if (ch === "=") {
       this.advance(1);
       this.skipWs();
 
-      // Check for `= ... {` (replaceProperties with preserveValue)
-      if (this.startsWith("...")) {
-        const saved = this.pos;
-        this.advance(3);
-        this.skipWs();
-        if (this.peekChar() === "{") {
-          const props = this.parsePropertiesBlock();
-          return {
-            kind: "replaceProperties",
-            path,
-            properties: props,
-            preserveValue: true,
-          };
-        }
-        this.pos = saved;
-      }
-
-      // Check for `= {` (replaceProperties without preserveValue)
+      // = { is now a parse error (= requires a value)
       if (this.peekChar() === "{") {
-        const props = this.parsePropertiesBlock();
-        return {
-          kind: "replaceProperties",
-          path,
-          properties: props,
-          preserveValue: false,
-        };
+        throw this.errorPoint(
+          "'=' requires a value; use ': { ... }' to replace properties"
+        );
       }
 
-      // `= value` (setEq)
+      // = value
       const value = this.parseEqValue();
       this.skipWs();
 
-      // Optionally followed by `{ ... }` or `{ statements }`
+      // Optional { props } block (MERGE semantics)
       if (this.peekChar() === "{") {
-        const saved = this.pos;
-        this.advance(1);
-        this.skipWs();
-
-        if (this.startsWith("...")) {
-          const saved2 = this.pos;
-          this.advance(3);
-          this.skipWs();
-          if (this.peekChar() === "}") {
-            this.advance(1);
-            return {
-              kind: "setEq",
-              path,
-              value,
-              properties: null,
-              preserveProperties: true,
-            };
-          }
-          this.pos = saved2;
-        }
-
-        this.pos = saved;
         const props = this.parsePropertiesBlock();
-        return {
-          kind: "setEq",
-          path,
-          value,
-          properties: props,
-          preserveProperties: false,
-        };
+        return { kind: "setEq", path, value, properties: props };
       }
 
-      return {
-        kind: "setEq",
-        path,
-        value,
-        properties: null,
-        preserveProperties: false,
-      };
+      return { kind: "setEq", path, value, properties: null };
     }
 
     if (ch === ":") {
       this.advance(1);
       this.skipWs();
       const props = this.parsePropertiesBlock();
-      return {
-        kind: "replaceProperties",
-        path,
-        properties: props,
-        preserveValue: false,
-      };
+      return { kind: "replaceProperties", path, properties: props };
     }
 
     if (ch === "{") {
@@ -270,9 +219,15 @@ class Parser {
 
   // ── Values ──────────────────────────────────────────────────────
 
-  private parseEqValue(): TagValue {
+  private parseEqValue(allowArrays = true): TagValue {
     const ch = this.peekChar();
-    if (ch === "[") return { kind: "array", elements: this.parseArray() };
+    if (allowArrays && ch === "[") return { kind: "array", elements: this.parseArray() };
+    if (this.startsWith("<<<")) {
+      return {
+        kind: "scalar",
+        value: { kind: "string", value: this.parseHeredoc() },
+      };
+    }
     if (ch === "@")
       return { kind: "scalar", value: this.parseAtValue() };
     if (ch === "$")
@@ -319,55 +274,7 @@ class Parser {
     throw this.errorPoint("Expected a value");
   }
 
-  private parseScalarValue(): TagValue {
-    const ch = this.peekChar();
-    if (ch === "@")
-      return { kind: "scalar", value: this.parseAtValue() };
-    if (ch === "$")
-      return { kind: "scalar", value: this.parseReference() };
-    if (ch === '"') {
-      if (this.startsWith('"""')) {
-        return {
-          kind: "scalar",
-          value: { kind: "string", value: this.parseTripleString() },
-        };
-      }
-      return {
-        kind: "scalar",
-        value: { kind: "string", value: this.parseDoubleQuotedString() },
-      };
-    }
-    if (ch === "'") {
-      if (this.startsWith("'''")) {
-        return {
-          kind: "scalar",
-          value: {
-            kind: "string",
-            value: this.parseTripleSingleQuotedString(),
-          },
-        };
-      }
-      return {
-        kind: "scalar",
-        value: { kind: "string", value: this.parseSingleQuotedString() },
-      };
-    }
-    if (
-      ch !== undefined &&
-      ((ch >= "0" && ch <= "9") || ch === "." || ch === "-")
-    ) {
-      return this.parseNumberOrString();
-    }
-    if (ch !== undefined && isBareChar(ch)) {
-      return {
-        kind: "scalar",
-        value: { kind: "string", value: this.parseBareString() },
-      };
-    }
-    throw this.errorPoint("Expected a value");
-  }
-
-  /** Parse `@true`, `@false`, or `@date` */
+  /** Parse `@true`, `@false`, `@none`, `@env.NAME`, or `@date` */
   private parseAtValue(): ScalarValue {
     const begin = this.position();
     this.expectChar("@");
@@ -378,6 +285,15 @@ class Parser {
     if (this.startsWith("false") && !this.isBareCharAt(5)) {
       this.advance(5);
       return { kind: "boolean", value: false };
+    }
+    if (this.startsWith("none") && !this.isBareCharAt(4)) {
+      this.advance(4);
+      return { kind: "none" };
+    }
+    if (this.startsWith("env.")) {
+      this.advance(4);
+      const name = this.parseBareString();
+      return { kind: "env", name };
     }
     const ch = this.peekChar();
     if (ch !== undefined && ch >= "0" && ch <= "9") {
@@ -391,14 +307,14 @@ class Parser {
     const token =
       this.pos > tokenStart ? this.input.substring(tokenStart, this.pos) : "";
     throw this.errorSpan(
-      `Illegal constant @${token}; expected @true, @false, or @date`,
+      `Illegal constant @${token}; expected @true, @false, @none, @env.NAME, or @date`,
       begin
     );
   }
 
   private isBareCharAt(offset: number): boolean {
-    const rem = this.remaining();
-    return offset < rem.length && isBareChar(rem[offset]);
+    const absPos = this.pos + offset;
+    return absPos < this.input.length && isBareChar(this.input[absPos]);
   }
 
   private parseDate(begin: Position): ScalarValue {
@@ -829,6 +745,91 @@ class Parser {
     }
   }
 
+  // ── Heredoc ─────────────────────────────────────────────────────
+
+  private parseHeredoc(): string {
+    const begin = this.position();
+    this.advance(3); // past <<<
+
+    // Skip spaces/tabs on the same line
+    while (this.pos < this.input.length) {
+      const ch = this.input[this.pos];
+      if (ch === " " || ch === "\t") {
+        this.pos++;
+      } else {
+        break;
+      }
+    }
+
+    // Allow \r before \n
+    if (this.pos < this.input.length && this.input[this.pos] === "\r") {
+      this.advance(1);
+    }
+
+    // Expect newline
+    if (this.pos >= this.input.length || this.input[this.pos] !== "\n") {
+      throw this.errorSpan("Expected newline after <<<", begin);
+    }
+    this.advance(1);
+
+    // Collect lines until we find >>> on its own line
+    const lines: string[] = [];
+    let foundClose = false;
+
+    while (this.pos < this.input.length) {
+      // Read a line (break only on \n)
+      const lineStart = this.pos;
+      while (this.pos < this.input.length && this.input[this.pos] !== "\n") {
+        this.pos++;
+      }
+      // Strip trailing \r for CRLF compatibility
+      let lineContent = this.input.substring(lineStart, this.pos);
+      if (lineContent.endsWith("\r")) {
+        lineContent = lineContent.substring(0, lineContent.length - 1);
+      }
+
+      // Consume the \n
+      if (this.pos < this.input.length && this.input[this.pos] === "\n") {
+        this.advance(1);
+      }
+
+      // Check if this is the closing >>> line
+      if (lineContent.trim() === ">>>") {
+        foundClose = true;
+        break;
+      }
+
+      lines.push(lineContent);
+    }
+
+    if (!foundClose) {
+      throw this.errorSpan("Unterminated heredoc (expected >>>)", begin);
+    }
+
+    if (lines.length === 0) {
+      return "";
+    }
+
+    // Determine strip amount from first line containing a non-space character
+    let strip = 0;
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+      if (trimmed.length > 0) {
+        strip = line.length - trimmed.length;
+        break;
+      }
+    }
+
+    // Strip indentation and join; whitespace-only lines become empty
+    const stripped = lines.map((line) => {
+      if (line.trimStart().length === 0) return "";
+      if (strip <= line.length) return line.substring(strip);
+      return line;
+    });
+
+    return stripped.join("\n") + "\n";
+  }
+
   // ── Arrays ──────────────────────────────────────────────────────
 
   private parseArray(): ArrayElement[] {
@@ -873,7 +874,7 @@ class Parser {
       return { value: { kind: "array", elements }, properties: null };
     }
 
-    const value = this.parseScalarValue();
+    const value = this.parseEqValue(false);
     this.skipWs();
     if (this.peekChar() === "{") {
       const props = this.parsePropertiesBlock();
@@ -887,18 +888,6 @@ class Parser {
   private parsePropertiesBlock(): Statement[] {
     const begin = this.position();
     this.expectChar("{");
-    this.skipWs();
-
-    if (this.startsWith("...")) {
-      const saved = this.pos;
-      this.advance(3);
-      this.skipWs();
-      if (this.peekChar() === "}") {
-        this.advance(1);
-        return [];
-      }
-      this.pos = saved;
-    }
 
     const stmts: Statement[] = [];
     for (;;) {

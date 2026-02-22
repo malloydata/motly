@@ -26,7 +26,7 @@ pub struct SchemaError {
 
 // ── Reference validation ────────────────────────────────────────────
 
-/// Validate that every `MOTLYRef` in the tree resolves to an existing node.
+/// Validate that every reference in the tree resolves to an existing node.
 ///
 /// Returns an empty vec when all references are valid.
 pub fn validate_references(root: &MOTLYValue) -> Vec<ValidationError> {
@@ -39,7 +39,11 @@ pub fn validate_references(root: &MOTLYValue) -> Vec<ValidationError> {
 
 /// Recursive walk collecting reference errors.
 /// `ancestors` is the stack of nodes from the root down to (but not including) `node`.
-/// The last element is always the parent of `node`'s properties.
+///
+/// References now live in `node.eq` as `EqValue::Reference`. We check child
+/// references at the *parent's* property iteration level (before pushing to
+/// ancestors) to maintain the same ancestor depth as the old `MOTLYNode::Ref`
+/// model.
 fn walk_refs<'a>(
     node: &'a MOTLYValue,
     path: &mut Vec<String>,
@@ -54,30 +58,31 @@ fn walk_refs<'a>(
 
     // Check properties
     if let Some(props) = &node.properties {
-        for (key, value) in props {
+        for (key, child) in props {
             path.push(key.clone());
-            match value {
-                MOTLYNode::Ref(link) => {
-                    if let Some(err_msg) = check_link(link, ancestors, root) {
-                        errors.push(ValidationError {
-                            message: err_msg,
-                            path: path.clone(),
-                            code: "unresolved-reference",
-                        });
-                    }
-                }
-                MOTLYNode::Value(child) => {
-                    ancestors.push(node);
-                    walk_refs(child, path, ancestors, root, errors);
-                    ancestors.pop();
+
+            // Check if this child's eq is a reference — check at THIS level
+            // (before pushing node to ancestors) to match old Ref semantics
+            if let Some(EqValue::Reference(ref link_to)) = child.eq {
+                if let Some(err_msg) = check_link(link_to, ancestors, root) {
+                    errors.push(ValidationError {
+                        message: err_msg,
+                        path: path.clone(),
+                        code: "unresolved-reference",
+                    });
                 }
             }
+
+            // Recurse into child for arrays and sub-properties
+            ancestors.push(node);
+            walk_refs(child, path, ancestors, root, errors);
+            ancestors.pop();
             path.pop();
         }
     }
 }
 
-/// Walk array elements looking for links.
+/// Walk array elements looking for references.
 fn walk_array_refs<'a>(
     arr: &'a [MOTLYNode],
     path: &mut Vec<String>,
@@ -89,30 +94,33 @@ fn walk_array_refs<'a>(
     for (i, elem) in arr.iter().enumerate() {
         let idx_key = format!("[{}]", i);
         path.push(idx_key);
-        match elem {
-            MOTLYNode::Ref(link) => {
-                if let Some(err_msg) = check_link(link, ancestors, root) {
-                    errors.push(ValidationError {
-                        message: err_msg,
-                        path: path.clone(),
-                        code: "unresolved-reference",
-                    });
-                }
-            }
-            MOTLYNode::Value(child) => {
-                // Array element nodes can themselves contain refs
-                ancestors.push(parent_node);
-                walk_refs(child, path, ancestors, root, errors);
-                ancestors.pop();
+
+        // Check if this element's eq is a reference — check at THIS level
+        if let Some(EqValue::Reference(ref link_to)) = elem.eq {
+            if let Some(err_msg) = check_link(link_to, ancestors, root) {
+                errors.push(ValidationError {
+                    message: err_msg,
+                    path: path.clone(),
+                    code: "unresolved-reference",
+                });
             }
         }
+
+        // Recurse into element for its own arrays and properties
+        ancestors.push(parent_node);
+        walk_refs(elem, path, ancestors, root, errors);
+        ancestors.pop();
         path.pop();
     }
 }
 
 /// Check whether a link resolves. Returns `Some(error_message)` on failure.
-fn check_link(link: &MOTLYRef, ancestors: &[&MOTLYValue], root: &MOTLYValue) -> Option<String> {
-    let (ups, segments) = parse_link_string(&link.link_to);
+fn check_link(link_to: &str, ancestors: &[&MOTLYValue], root: &MOTLYValue) -> Option<String> {
+    let parsed = parse_link_string(link_to);
+    let (ups, segments) = match parsed {
+        Ok((ups, segs)) => (ups, segs),
+        Err(msg) => return Some(msg),
+    };
 
     // Determine the start node for resolution.
     let start = if ups == 0 {
@@ -138,7 +146,7 @@ fn check_link(link: &MOTLYRef, ancestors: &[&MOTLYValue], root: &MOTLYValue) -> 
             _ => {
                 return Some(format!(
                     "Reference \"{}\" goes {} level(s) up but only {} ancestor(s) available",
-                    link.link_to,
+                    link_to,
                     ups,
                     ancestors.len()
                 ));
@@ -147,7 +155,7 @@ fn check_link(link: &MOTLYRef, ancestors: &[&MOTLYValue], root: &MOTLYValue) -> 
     };
 
     // Follow the path segments from the start node.
-    resolve_path(start, &segments, &link.link_to)
+    resolve_path(start, &segments, link_to)
 }
 
 /// Parsed reference segment for resolution.
@@ -157,7 +165,8 @@ enum RefSeg {
 }
 
 /// Parse a link_to string like "$^^items[0].name" into (ups, segments).
-fn parse_link_string(s: &str) -> (usize, Vec<RefSeg>) {
+/// Returns an error for invalid array indices.
+fn parse_link_string(s: &str) -> Result<(usize, Vec<RefSeg>), String> {
     let mut chars = s.chars().peekable();
 
     // Skip leading '$'
@@ -199,8 +208,14 @@ fn parse_link_string(s: &str) -> (usize, Vec<RefSeg>) {
                     idx_buf.push(c);
                     chars.next();
                 }
-                if let Ok(idx) = idx_buf.parse::<usize>() {
-                    segments.push(RefSeg::Index(idx));
+                match idx_buf.parse::<usize>() {
+                    Ok(idx) => segments.push(RefSeg::Index(idx)),
+                    Err(_) => {
+                        return Err(format!(
+                            "Reference \"{}\" has invalid array index \"[{}]\"",
+                            s, idx_buf
+                        ));
+                    }
                 }
             }
             _ => {
@@ -213,7 +228,7 @@ fn parse_link_string(s: &str) -> (usize, Vec<RefSeg>) {
         segments.push(RefSeg::Name(name_buf));
     }
 
-    (ups, segments)
+    Ok((ups, segments))
 }
 
 /// Follow path segments from a start node. Returns Some(error) if unresolved.
@@ -225,16 +240,13 @@ fn resolve_path(start: &MOTLYValue, segments: &[RefSeg], link_str: &str) -> Opti
             (RefSeg::Name(name), ResolveTarget::Node(node)) => {
                 match &node.properties {
                     Some(props) => match props.get(name.as_str()) {
-                        Some(MOTLYNode::Value(child)) => {
-                            current = ResolveTarget::Node(child);
-                        }
-                        Some(MOTLYNode::Ref(_)) => {
-                            // Resolving through a link - the target exists as a link node.
-                            // For validation purposes, the link itself exists, so the
-                            // reference up to this point is valid. But we can't follow
-                            // through a link to further sub-paths.
-                            // Treat link as a terminal value.
-                            current = ResolveTarget::Terminal;
+                        Some(child) => {
+                            // If child is a reference itself, treat as terminal
+                            if child.is_ref() {
+                                current = ResolveTarget::Terminal;
+                            } else {
+                                current = ResolveTarget::Node(child);
+                            }
                         }
                         None => {
                             return Some(format!(
@@ -259,13 +271,11 @@ fn resolve_path(start: &MOTLYValue, segments: &[RefSeg], link_str: &str) -> Opti
                                 link_str, idx, arr.len()
                             ));
                     }
-                    match &arr[*idx] {
-                        MOTLYNode::Value(child) => {
-                            current = ResolveTarget::Node(child);
-                        }
-                        MOTLYNode::Ref(_) => {
-                            current = ResolveTarget::Terminal;
-                        }
+                    let elem = &arr[*idx];
+                    if elem.is_ref() {
+                        current = ResolveTarget::Terminal;
+                    } else {
+                        current = ResolveTarget::Node(elem);
                     }
                 }
                 _ => {
@@ -313,10 +323,10 @@ fn extract_section<'a>(
     node: &'a MOTLYValue,
     name: &str,
 ) -> Option<&'a BTreeMap<String, MOTLYNode>> {
-    node.properties.as_ref()?.get(name).and_then(|v| match v {
-        MOTLYNode::Value(n) => n.properties.as_ref(),
-        _ => None,
-    })
+    node.properties
+        .as_ref()?
+        .get(name)
+        .and_then(|v| v.properties.as_ref())
 }
 
 /// Get the `eq` string value of a node.
@@ -327,12 +337,9 @@ fn get_eq_string(node: &MOTLYValue) -> Option<&str> {
     }
 }
 
-/// Get the `eq` value of a MOTLYNode if it's a Node with a scalar string eq.
+/// Get the `eq` value of a MOTLYNode if it has a scalar string eq.
 fn value_eq_string(value: &MOTLYNode) -> Option<&str> {
-    match value {
-        MOTLYNode::Value(n) => get_eq_string(n),
-        _ => None,
-    }
+    get_eq_string(value)
 }
 
 /// Validate a node against a schema node (which has Required/Optional/Additional sections).
@@ -387,7 +394,6 @@ fn validate_node_against_schema(
     // Check for unknown properties
     if let Some(tag_p) = tag_props {
         let known_keys = collect_known_keys(required, optional);
-        // Also skip schema-internal keys
         for key in tag_p.keys() {
             if known_keys.contains(&key.as_str()) {
                 continue;
@@ -406,13 +412,7 @@ fn validate_node_against_schema(
                 AdditionalPolicy::ValidateAs(ref type_name) => {
                     if let Some(value) = tag_p.get(key.as_str()) {
                         let synthetic = make_type_spec_node(type_name);
-                        validate_value_type(
-                            value,
-                            &MOTLYNode::Value(synthetic),
-                            types,
-                            &prop_path,
-                            errors,
-                        );
+                        validate_value_type(value, &synthetic, types, &prop_path, errors);
                     }
                 }
             }
@@ -456,20 +456,15 @@ fn get_additional_policy(schema: &MOTLYValue) -> AdditionalPolicy {
         Some(v) => v,
         None => return AdditionalPolicy::Reject,
     };
-    match additional {
-        MOTLYNode::Value(n) => {
-            if let Some(eq_str) = get_eq_string(n) {
-                match eq_str {
-                    "allow" => AdditionalPolicy::Allow,
-                    "reject" => AdditionalPolicy::Reject,
-                    other => AdditionalPolicy::ValidateAs(other.to_string()),
-                }
-            } else {
-                // Additional without eq: just having it means allow
-                AdditionalPolicy::Allow
-            }
+    if let Some(eq_str) = get_eq_string(additional) {
+        match eq_str {
+            "allow" => AdditionalPolicy::Allow,
+            "reject" => AdditionalPolicy::Reject,
+            other => AdditionalPolicy::ValidateAs(other.to_string()),
         }
-        _ => AdditionalPolicy::Reject,
+    } else {
+        // Additional without eq: just having it means allow
+        AdditionalPolicy::Allow
     }
 }
 
@@ -486,14 +481,16 @@ fn validate_value_type(
     path: &[String],
     errors: &mut Vec<SchemaError>,
 ) {
-    let spec_node = match type_spec {
-        MOTLYNode::Value(n) => n,
-        MOTLYNode::Ref(_) => return, // links in schema are not type specs
-    };
+    let spec_node = type_spec;
+
+    // References in schema are not type specs
+    if spec_node.is_ref() {
+        return;
+    }
 
     // Check if this is a union type (oneOf)
     if let Some(one_of_props) = &spec_node.properties {
-        if let Some(MOTLYNode::Value(one_of_node)) = one_of_props.get("oneOf") {
+        if let Some(one_of_node) = one_of_props.get("oneOf") {
             validate_union(value, one_of_node, types, path, errors);
             return;
         }
@@ -501,14 +498,14 @@ fn validate_value_type(
 
     // Check if this is an enum type (eq)
     if let Some(spec_props) = &spec_node.properties {
-        if let Some(MOTLYNode::Value(eq_node)) = spec_props.get("eq") {
+        if let Some(eq_node) = spec_props.get("eq") {
             if let Some(EqValue::Array(allowed)) = &eq_node.eq {
                 validate_enum(value, allowed, path, errors);
                 return;
             }
         }
         // Check for pattern matching (matches)
-        if let Some(MOTLYNode::Value(matches_node)) = spec_props.get("matches") {
+        if let Some(matches_node) = spec_props.get("matches") {
             if let Some(base_type) = get_eq_string(spec_node) {
                 validate_base_type(value, base_type, types, path, errors);
             }
@@ -529,17 +526,14 @@ fn validate_value_type(
                     || p.contains_key("Additional")
             }) {
                 // Nested schema validation
-                match value {
-                    MOTLYNode::Value(tag_node) => {
-                        validate_node_against_schema(tag_node, spec_node, types, path, errors);
-                    }
-                    MOTLYNode::Ref(_) => {
-                        errors.push(SchemaError {
-                            message: "Expected a tag but found a link".to_string(),
-                            path: path.to_vec(),
-                            code: "wrong-type",
-                        });
-                    }
+                if value.is_ref() {
+                    errors.push(SchemaError {
+                        message: "Expected a tag but found a link".to_string(),
+                        path: path.to_vec(),
+                        code: "wrong-type",
+                    });
+                } else {
+                    validate_node_against_schema(value, spec_node, types, path, errors);
                 }
             }
             return;
@@ -575,10 +569,6 @@ fn validate_base_type(
             // Look up custom type in Types section
             if let Some(types_map) = types {
                 if let Some(type_def) = types_map.get(custom) {
-                    // The type definition is itself a type specifier — it may
-                    // be a structural schema (Required/Optional), a oneOf union,
-                    // an enum, a pattern, etc. Route through validate_value_type
-                    // so all those forms are handled.
                     validate_value_type(value, type_def, types, path, errors);
                 } else {
                     errors.push(SchemaError {
@@ -599,22 +589,19 @@ fn validate_base_type(
 }
 
 fn validate_type_string(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
-    match value {
-        MOTLYNode::Value(n) => {
-            match &n.eq {
-                Some(EqValue::Scalar(Scalar::String(_))) => {} // ok
-                _ => {
-                    errors.push(SchemaError {
-                        message: "Expected type \"string\"".to_string(),
-                        path: path.to_vec(),
-                        code: "wrong-type",
-                    });
-                }
-            }
-        }
-        MOTLYNode::Ref(_) => {
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"string\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
+    match &value.eq {
+        Some(EqValue::Scalar(Scalar::String(_))) => {} // ok
+        _ => {
             errors.push(SchemaError {
-                message: "Expected type \"string\" but found a link".to_string(),
+                message: "Expected type \"string\"".to_string(),
                 path: path.to_vec(),
                 code: "wrong-type",
             });
@@ -623,22 +610,19 @@ fn validate_type_string(value: &MOTLYNode, path: &[String], errors: &mut Vec<Sch
 }
 
 fn validate_type_number(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
-    match value {
-        MOTLYNode::Value(n) => {
-            match &n.eq {
-                Some(EqValue::Scalar(Scalar::Number(_))) => {} // ok
-                _ => {
-                    errors.push(SchemaError {
-                        message: "Expected type \"number\"".to_string(),
-                        path: path.to_vec(),
-                        code: "wrong-type",
-                    });
-                }
-            }
-        }
-        MOTLYNode::Ref(_) => {
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"number\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
+    match &value.eq {
+        Some(EqValue::Scalar(Scalar::Number(_))) => {} // ok
+        _ => {
             errors.push(SchemaError {
-                message: "Expected type \"number\" but found a link".to_string(),
+                message: "Expected type \"number\"".to_string(),
                 path: path.to_vec(),
                 code: "wrong-type",
             });
@@ -647,22 +631,19 @@ fn validate_type_number(value: &MOTLYNode, path: &[String], errors: &mut Vec<Sch
 }
 
 fn validate_type_boolean(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
-    match value {
-        MOTLYNode::Value(n) => {
-            match &n.eq {
-                Some(EqValue::Scalar(Scalar::Boolean(_))) => {} // ok
-                _ => {
-                    errors.push(SchemaError {
-                        message: "Expected type \"boolean\"".to_string(),
-                        path: path.to_vec(),
-                        code: "wrong-type",
-                    });
-                }
-            }
-        }
-        MOTLYNode::Ref(_) => {
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"boolean\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
+    match &value.eq {
+        Some(EqValue::Scalar(Scalar::Boolean(_))) => {} // ok
+        _ => {
             errors.push(SchemaError {
-                message: "Expected type \"boolean\" but found a link".to_string(),
+                message: "Expected type \"boolean\"".to_string(),
                 path: path.to_vec(),
                 code: "wrong-type",
             });
@@ -671,22 +652,19 @@ fn validate_type_boolean(value: &MOTLYNode, path: &[String], errors: &mut Vec<Sc
 }
 
 fn validate_type_date(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
-    match value {
-        MOTLYNode::Value(n) => {
-            match &n.eq {
-                Some(EqValue::Scalar(Scalar::Date(_))) => {} // ok
-                _ => {
-                    errors.push(SchemaError {
-                        message: "Expected type \"date\"".to_string(),
-                        path: path.to_vec(),
-                        code: "wrong-type",
-                    });
-                }
-            }
-        }
-        MOTLYNode::Ref(_) => {
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"date\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
+    match &value.eq {
+        Some(EqValue::Scalar(Scalar::Date(_))) => {} // ok
+        _ => {
             errors.push(SchemaError {
-                message: "Expected type \"date\" but found a link".to_string(),
+                message: "Expected type \"date\"".to_string(),
                 path: path.to_vec(),
                 code: "wrong-type",
             });
@@ -696,29 +674,24 @@ fn validate_type_date(value: &MOTLYNode, path: &[String], errors: &mut Vec<Schem
 
 fn validate_type_tag(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
     // tag means the node should exist (may have properties, no eq required)
-    match value {
-        MOTLYNode::Value(_) => {} // ok - node exists
-        MOTLYNode::Ref(_) => {
-            errors.push(SchemaError {
-                message: "Expected type \"tag\" but found a link".to_string(),
-                path: path.to_vec(),
-                code: "wrong-type",
-            });
-        }
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"tag\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
     }
+    // Otherwise: node exists, ok
 }
 
 fn validate_type_flag(value: &MOTLYNode, path: &[String], errors: &mut Vec<SchemaError>) {
     // flag means the node exists (presence-only)
-    match value {
-        MOTLYNode::Value(_) => {} // ok
-        MOTLYNode::Ref(_) => {
-            errors.push(SchemaError {
-                message: "Expected type \"flag\" but found a link".to_string(),
-                path: path.to_vec(),
-                code: "wrong-type",
-            });
-        }
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected type \"flag\" but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
     }
 }
 
@@ -735,19 +708,16 @@ fn validate_array_type(
     path: &[String],
     errors: &mut Vec<SchemaError>,
 ) {
-    let node = match value {
-        MOTLYNode::Value(n) => n,
-        MOTLYNode::Ref(_) => {
-            errors.push(SchemaError {
-                message: format!("Expected type \"{}[]\" but found a link", inner_type),
-                path: path.to_vec(),
-                code: "wrong-type",
-            });
-            return;
-        }
-    };
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: format!("Expected type \"{}[]\" but found a link", inner_type),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
 
-    let arr = match &node.eq {
+    let arr = match &value.eq {
         Some(EqValue::Array(arr)) => arr,
         _ => {
             errors.push(SchemaError {
@@ -777,20 +747,17 @@ fn validate_enum(
     path: &[String],
     errors: &mut Vec<SchemaError>,
 ) {
-    let node = match value {
-        MOTLYNode::Value(n) => n,
-        MOTLYNode::Ref(_) => {
-            errors.push(SchemaError {
-                message: "Expected an enum value but found a link".to_string(),
-                path: path.to_vec(),
-                code: "wrong-type",
-            });
-            return;
-        }
-    };
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected an enum value but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
 
     // Check if the node's eq matches any of the allowed values
-    let node_eq = match &node.eq {
+    let node_eq = match &value.eq {
         Some(EqValue::Scalar(s)) => s,
         _ => {
             errors.push(SchemaError {
@@ -802,22 +769,16 @@ fn validate_enum(
         }
     };
 
-    let matches = allowed.iter().any(|a| match a {
-        MOTLYNode::Value(n) => match &n.eq {
-            Some(EqValue::Scalar(s)) => s == node_eq,
-            _ => false,
-        },
+    let matches = allowed.iter().any(|a| match &a.eq {
+        Some(EqValue::Scalar(s)) => s == node_eq,
         _ => false,
     });
 
     if !matches {
         let allowed_strs: Vec<String> = allowed
             .iter()
-            .filter_map(|a| match a {
-                MOTLYNode::Value(n) => match &n.eq {
-                    Some(EqValue::Scalar(s)) => Some(format!("{:?}", scalar_display(s))),
-                    _ => None,
-                },
+            .filter_map(|a| match &a.eq {
+                Some(EqValue::Scalar(s)) => Some(format!("{:?}", scalar_display(s))),
                 _ => None,
             })
             .collect();
@@ -853,19 +814,16 @@ fn validate_pattern(
         None => return,
     };
 
-    let node = match value {
-        MOTLYNode::Value(n) => n,
-        MOTLYNode::Ref(_) => {
-            errors.push(SchemaError {
-                message: "Expected a value matching a pattern but found a link".to_string(),
-                path: path.to_vec(),
-                code: "wrong-type",
-            });
-            return;
-        }
-    };
+    if value.is_ref() {
+        errors.push(SchemaError {
+            message: "Expected a value matching a pattern but found a link".to_string(),
+            path: path.to_vec(),
+            code: "wrong-type",
+        });
+        return;
+    }
 
-    let val_str = match &node.eq {
+    let val_str = match &value.eq {
         Some(EqValue::Scalar(Scalar::String(s))) => s.as_str(),
         _ => {
             errors.push(SchemaError {
@@ -921,13 +879,7 @@ fn validate_union(
         };
         let mut trial_errors = Vec::new();
         let synthetic = make_type_spec_node(type_name);
-        validate_value_type(
-            value,
-            &MOTLYNode::Value(synthetic),
-            types,
-            path,
-            &mut trial_errors,
-        );
+        validate_value_type(value, &synthetic, types, path, &mut trial_errors);
         if trial_errors.is_empty() {
             return; // matches one of the types
         }

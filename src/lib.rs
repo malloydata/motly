@@ -21,13 +21,16 @@ pub struct MOTLYResult {
 }
 
 /// Parse MOTLY source and execute statements against the given value,
-/// returning the updated value and any parse errors.
-pub fn parse_motly(input: &str, value: MOTLYValue) -> MOTLYResult {
+/// returning the updated value and any errors (parse errors + non-fatal execution errors).
+pub fn parse_motly(input: &str, mut value: MOTLYValue) -> MOTLYResult {
     match parser::parse(input) {
-        Ok(stmts) => MOTLYResult {
-            value: interpreter::execute(&stmts, value),
-            errors: Vec::new(),
-        },
+        Ok(stmts) => {
+            let exec_errors = interpreter::execute(&stmts, &mut value);
+            MOTLYResult {
+                value,
+                errors: exec_errors,
+            }
+        }
         Err(err) => MOTLYResult {
             value,
             errors: vec![err],

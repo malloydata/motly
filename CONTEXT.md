@@ -18,16 +18,16 @@ Both the Rust library and the TS parser expose an identical `MOTLYSession` API. 
 ```
 src/
   ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment
-  parser.rs        — Recursive descent parser (~1050 lines), produces Vec<Statement>
-  interpreter.rs   — Executes statements against a MOTLYValue tree (~300 lines)
-  tree.rs          — Output types: MOTLYValue, MOTLYNode (= MOTLYValue | MOTLYLink), Scalar, EqValue
-  validate.rs      — Reference validation + schema validation (~940 lines)
+  parser.rs        — Recursive descent parser, produces Vec<Statement>
+  interpreter.rs   — Executes statements against a MOTLYValue tree (mutates in place)
+  tree.rs          — Output types: MOTLYValue, MOTLYNode (= MOTLYValue), Scalar, EqValue
+  validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
   json.rs          — JSON serialization (compact, pretty, wire format with $date)
   from_json.rs     — JSON deserialization, wire format parsing
-  lib.rs           — Public API: parse_motly(), MotlySession, WASM FFI functions
+  lib.rs           — Public API: parse_motly(), WASM FFI session functions
   main.rs          — CLI: reads stdin, outputs JSON to stdout, errors to stderr
-  tests.rs         — 5 shared fixture runners + 22 implementation-specific tests (~550 lines)
+  tests.rs         — Shared fixture runners + implementation-specific tests
 
 bindings/typescript/
   interface/           — "motly-ts-interface" package (shared types, private)
@@ -42,7 +42,7 @@ bindings/typescript/
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
       validate.ts      — TypeScript port of src/validate.rs (~740 lines)
-    test/test.ts       — 219 tests (hand-written + shared fixtures)
+    test/test.ts       — fixture-driven tests + hand-written tests
 
 docs/
   language.md      — Complete MOTLY language reference with EBNF grammar
@@ -50,9 +50,9 @@ docs/
 
 test-data/
   fixtures/        — Shared JSON test fixtures (both implementations run these)
-    parse.json         — 112 entries: parse input → expected value
-    parse-errors.json  — 13 entries: parse input → expected errors
-    schema.json        — ~62 entries: schema + input → expected validation errors
+    parse.json         — 134 entries: parse input → expected value
+    parse-errors.json  — 14 entries: parse input → expected errors
+    schema.json        — 70 entries: schema + input → expected validation errors
     refs.json          — 15 entries: input → expected reference validation errors
     session.json       — 10 entries: multi-step session operations
   motly-schema.motly       — MOTLY meta-schema (schema that validates schemas)
@@ -62,33 +62,15 @@ test-data/
 
 ## The MOTLY Language
 
-Full reference: `docs/language.md`. EBNF grammar is at the bottom of that file.
+Full reference: `docs/language.md`. EBNF grammar is at the end of that file.
 
-### Key syntax
+Every node has two independent slots: a **value** (scalar, array, reference, or `@none`) and **properties** (a map of child nodes). The three core operators each control a different combination:
 
-- **Bare strings**: `name = hello` — no quotes needed for `[A-Za-z0-9_]` + extended Latin
-- **Quoted strings**: `"double"` (escapes), `'single'` (raw), `"""triple"""`, `'''triple raw'''`
-- **Backtick identifiers**: `` `content-type` = json `` — for property names with special chars
-- **Numbers**: `42`, `-3.14`, `.5`, `1.5e10` — tokens starting with digits but continuing with letters are bare strings (e.g., `v2`)
-- **Booleans**: `@true`, `@false` — the `@` prefix prevents ambiguity with bare strings
-- **Dates**: `@2024-01-15`, `@2024-01-15T10:30:00Z` — ISO 8601 with `@` prefix
-- **Arrays**: `[a, b, c]` — trailing comma allowed, elements can have properties
-- **References**: `$root.path` (absolute), `$^sibling` (up one), `$^^grandparent` (up two), `$arr[0]` (indexed)
-- **Flags**: bare name with no value creates a presence-only node: `hidden`
-- **Deletion**: `-name` deletes a property, `-...` clears all properties in scope
-- **Comments**: `# line comment`
-- **Commas**: optional separators between statements (treated as whitespace); required in arrays
+- **`=`** — sets the value, never touches properties
+- **`:`** — replaces properties, never touches the value
+- **`:=`** — sets value AND replaces properties simultaneously
 
-### Replace vs Merge (critical concept)
-
-- **Colon** `name: { props }` or `name = { props }` — **replaces** all existing properties
-- **Space** `name { props }` — **merges** with existing properties
-- **Preserve value** `name = ... { new_props }` — replaces properties, keeps scalar value
-- **Preserve properties** `name = new_val { ... }` — changes scalar value, keeps existing properties
-
-### Dot notation
-
-`database.connection.pool.max = 100` creates nested objects.
+Merge (preserving existing properties) uses space-before-brace: `name { }`. See `docs/language.md` for the full assignment matrix, string types (bare, quoted, triple-quoted, heredoc `<<<...>>>`), `@none`, references, cloning with `:=`, env refs, and all other details.
 
 ## Parser Pipeline
 
@@ -107,15 +89,17 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYValue tree
 ### Key types
 
 **AST** (intermediate, not exposed):
-- `Statement` — enum: `SetEq`, `ReplaceProperties`, `UpdateProperties`, `Define`, `ClearAll`
-- `ScalarValue` — enum: `String`, `Number`, `Boolean`, `Date`, `Reference`
+- `Statement` — enum: `SetEq`, `AssignBoth`, `ReplaceProperties`, `UpdateProperties`, `Define`, `ClearAll`
+- `ScalarValue` — enum: `String`, `Number`, `Boolean`, `Date`, `Reference`, `None`, `Env`
 - `TagValue` — scalar or array
 - `ArrayElement` — value + optional properties
 
 **Output tree** (public API):
-- `MOTLYValue` — has optional `eq` (scalar/array), optional `properties` (map of children), optional `deleted` flag
-- `MOTLYNode` = `MOTLYValue | MOTLYLink` (Rust) / `MOTLYValue | MOTLYRef` (TS)
-- `MOTLYLink`/`MOTLYRef` — holds a `linkTo` string like `$^sibling`
+- `MOTLYValue` — has optional `eq` (scalar/array/reference/env-ref), optional `properties` (map of children), optional `deleted` flag
+- `MOTLYNode` = `MOTLYValue` — references live in the `eq` slot as `EqValue::Reference` (Rust) or `{ linkTo }` (TS)
+- Environment refs live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS)
+
+The interpreter mutates the `MOTLYValue` tree in place (does not return a new value).
 
 ### Property key ordering
 
@@ -159,7 +143,7 @@ After `dispose()`, all methods throw. `dispose()` itself is idempotent.
 
 ### Rust
 ```sh
-cargo test              # 39 tests (5 fixture runners + 22 impl-specific + 12 from_json)
+cargo test              # fixture runners + implementation-specific tests
 cargo build --release   # library + CLI binary
 echo 'name = hello' | cargo run   # CLI usage
 ```
@@ -176,7 +160,7 @@ npm run build         # tsc — must be built before the parser package
 cd bindings/typescript/parser
 npm install
 npm run build         # tsc
-npm test              # 219 tests via node --test
+npm test              # fixture-driven + hand-written tests via node --test
 npm run pack          # produces @malloydata/motly-ts-parser tarball
 ```
 Zero native dependencies. Uses Node.js built-in test runner (`node:test`).
@@ -218,7 +202,7 @@ The Rust crate is not published to crates.io (yet).
 ## Common Pitfalls
 
 1. **Array types must be quoted in schemas**: `items = "string[]"` not `items = string[]`
-2. **`@` starts special values**: `@true`, `@false`, `@2024-...` — values containing `@` must be quoted
-3. **Replace vs merge**: `:` replaces, space merges — this is the most common source of confusion in the language
+2. **`@` starts special values**: `@true`, `@false`, `@none`, `@2024-...` — values containing `@` must be quoted
+3. **Three operators**: `=` (value only), `:` (properties only), `:=` (both). Space-before-brace merges, `:` replaces.
 4. **Bare strings**: Tokens like `v2` (digit after letter) are bare strings, not numbers. Only pure digit sequences (optionally with `.`, `e`, `-`) parse as numbers.
 5. **`file:` deps and Babel**: `file:` dependencies in `package.json` create symlinks. Babel resolves the real path and processes files it shouldn't, causing `@babel/runtime` errors. Fix: use `npm pack` tarball for local testing in downstream projects.

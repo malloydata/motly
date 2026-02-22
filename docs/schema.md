@@ -1,5 +1,7 @@
 # MOTLY Schema Validation Reference
 
+> **NOTE:** This describes some early thinking on the idea that a schema for a MOTLY config file could be written using MOTLY as a DSL, which is attractive but has not been fully thought out.
+
 MOTLY schemas validate that configuration files conform to expected structures. Schemas are themselves MOTLY files.
 
 ## Overview

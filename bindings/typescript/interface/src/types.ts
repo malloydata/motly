@@ -6,25 +6,30 @@ export interface MOTLYRef {
   linkTo: string;
 }
 
+/** An environment variable reference (e.g. `@env.API_KEY`). */
+export interface MOTLYEnvRef {
+  env: string;
+}
+
 /**
  * A value node in the MOTLY tree.
  *
- * - `eq` — the node's assigned value: a scalar, or an array of child nodes
+ * - `eq` — the node's assigned value: a scalar, a reference ({@link MOTLYRef}),
+ *   or an array of child nodes
  * - `properties` — named child nodes (the node's "tags")
  * - `deleted` — true if this node was explicitly deleted with `-name`
  */
 export interface MOTLYValue {
-  eq?: MOTLYScalar | MOTLYNode[];
+  eq?: MOTLYScalar | MOTLYRef | MOTLYEnvRef | MOTLYNode[];
   properties?: Record<string, MOTLYNode>;
   deleted?: boolean;
 }
 
 /**
- * A node in the MOTLY tree: either a {@link MOTLYValue} (with eq/properties)
- * or a {@link MOTLYRef} (a link to another node). Distinguish them by checking
- * for the `linkTo` property.
+ * A node in the MOTLY tree. Every node is a {@link MOTLYValue}.
+ * References are represented as `eq: { linkTo: "..." }` inside a value node.
  */
-export type MOTLYNode = MOTLYValue | MOTLYRef;
+export type MOTLYNode = MOTLYValue;
 
 /** A parse error with source location span. */
 export interface MOTLYError {
@@ -46,6 +51,16 @@ export interface MOTLYSchemaError {
   message: string;
   /** Path to the offending node (e.g. `["metadata", "name"]`). */
   path: string[];
+}
+
+/** Type guard: is this eq value a link reference? */
+export function isRef(eq: MOTLYValue["eq"]): eq is MOTLYRef {
+  return typeof eq === "object" && eq !== null && "linkTo" in eq && !Array.isArray(eq) && !(eq instanceof Date);
+}
+
+/** Type guard: is this eq value an env reference? */
+export function isEnvRef(eq: MOTLYValue["eq"]): eq is MOTLYEnvRef {
+  return typeof eq === "object" && eq !== null && "env" in eq && !Array.isArray(eq) && !(eq instanceof Date);
 }
 
 /** An error from reference validation. */

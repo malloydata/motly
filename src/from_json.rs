@@ -226,14 +226,14 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    /// Parse a JSON object that represents a MOTLYNode (either a Value or a Ref).
-    fn parse_value(&mut self) -> Result<MOTLYNode, String> {
+    /// Parse a JSON object that represents a MOTLYNode (which is now just MOTLYValue).
+    /// References are represented as eq: {"linkTo": "..."} and env refs as eq: {"env": "..."}.
+    fn parse_node(&mut self) -> Result<MOTLYValue, String> {
         self.expect(b'{')?;
 
         let mut eq: Option<EqValue> = None;
         let mut properties: Option<BTreeMap<String, MOTLYNode>> = None;
         let mut deleted = false;
-        let mut link_to: Option<String> = None;
 
         if self.peek() != Some(b'}') {
             loop {
@@ -241,9 +241,6 @@ impl<'a> JsonParser<'a> {
                 self.expect(b':')?;
 
                 match key.as_str() {
-                    "linkTo" => {
-                        link_to = Some(self.parse_string()?);
-                    }
                     "deleted" => {
                         self.skip_ws();
                         self.parse_literal(b"true")?;
@@ -272,56 +269,59 @@ impl<'a> JsonParser<'a> {
 
         self.expect(b'}')?;
 
-        if let Some(target) = link_to {
-            Ok(MOTLYNode::Ref(MOTLYRef { link_to: target }))
-        } else {
-            Ok(MOTLYNode::Value(MOTLYValue {
-                eq,
-                properties,
-                deleted,
-            }))
-        }
+        Ok(MOTLYValue {
+            eq,
+            properties,
+            deleted,
+        })
     }
 
-    /// Parse the top-level node (must be a MOTLYValue, not a Ref).
-    fn parse_node(&mut self) -> Result<MOTLYValue, String> {
-        let node = self.parse_value()?;
-        match node {
-            MOTLYNode::Value(v) => Ok(v),
-            MOTLYNode::Ref(_) => Err("Expected a MOTLYValue at top level, got a Ref".to_string()),
-        }
-    }
-
-    /// Parse an eq value: a scalar, an array, or (in wire mode) a `{"$date": "..."}`.
+    /// Parse an eq value: a scalar, an array, or a special object
+    /// (`{"$date": "..."}` in wire mode, `{"linkTo": "..."}`, or `{"env": "..."}`).
     fn parse_eq(&mut self) -> Result<EqValue, String> {
         match self.peek() {
             Some(b'[') => {
                 let arr = self.parse_array()?;
                 Ok(EqValue::Array(arr))
             }
-            Some(b'{') if self.wire => {
-                // Wire format: {"$date": "..."} → Scalar::Date
-                let scalar = self.parse_date_wrapper()?;
-                Ok(EqValue::Scalar(scalar))
+            Some(b'{') => {
+                // Could be: {"$date": "..."} (wire mode), {"linkTo": "..."}, or {"env": "..."}
+                let saved_pos = self.pos;
+                self.expect(b'{')?;
+                let key = self.parse_string()?;
+                self.expect(b':')?;
+
+                match key.as_str() {
+                    "$date" if self.wire => {
+                        let value = self.parse_string()?;
+                        self.expect(b'}')?;
+                        Ok(EqValue::Scalar(Scalar::Date(value)))
+                    }
+                    "linkTo" => {
+                        let value = self.parse_string()?;
+                        self.expect(b'}')?;
+                        Ok(EqValue::Reference(value))
+                    }
+                    "env" => {
+                        let value = self.parse_string()?;
+                        self.expect(b'}')?;
+                        Ok(EqValue::EnvRef(value))
+                    }
+                    _ => {
+                        // Unknown object in eq position — restore and treat as error
+                        self.pos = saved_pos;
+                        Err(format!(
+                            "Unexpected object in eq position with key \"{}\" at position {}",
+                            key, saved_pos
+                        ))
+                    }
+                }
             }
             _ => {
                 let scalar = self.parse_scalar()?;
                 Ok(EqValue::Scalar(scalar))
             }
         }
-    }
-
-    /// Parse a `{"$date": "..."}` wrapper into `Scalar::Date`.
-    fn parse_date_wrapper(&mut self) -> Result<Scalar, String> {
-        self.expect(b'{')?;
-        let key = self.parse_string()?;
-        if key != "$date" {
-            return Err(format!("Expected \"$date\" key, got \"{}\"", key));
-        }
-        self.expect(b':')?;
-        let value = self.parse_string()?;
-        self.expect(b'}')?;
-        Ok(Scalar::Date(value))
     }
 
     /// Parse a JSON scalar value into a Scalar.
@@ -358,7 +358,7 @@ impl<'a> JsonParser<'a> {
 
         if self.peek() != Some(b']') {
             loop {
-                let node = self.parse_value()?;
+                let node = self.parse_node()?;
                 arr.push(node);
 
                 self.skip_ws();
@@ -383,7 +383,7 @@ impl<'a> JsonParser<'a> {
             loop {
                 let key = self.parse_string()?;
                 self.expect(b':')?;
-                let value = self.parse_value()?;
+                let value = self.parse_node()?;
                 map.insert(key, value);
 
                 self.skip_ws();
@@ -517,13 +517,11 @@ mod tests {
         let mut props = BTreeMap::new();
         props.insert(
             "name".to_string(),
-            MOTLYNode::Value(MOTLYValue::with_eq(EqValue::Scalar(Scalar::String(
-                "test".to_string(),
-            )))),
+            MOTLYValue::with_eq(EqValue::Scalar(Scalar::String("test".to_string()))),
         );
         props.insert(
             "count".to_string(),
-            MOTLYNode::Value(MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(5.0)))),
+            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(5.0))),
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -537,9 +535,21 @@ mod tests {
         let mut props = BTreeMap::new();
         props.insert(
             "link".to_string(),
-            MOTLYNode::Ref(MOTLYRef {
-                link_to: "$^parent.name".to_string(),
-            }),
+            MOTLYValue::with_eq(EqValue::Reference("$^parent.name".to_string())),
+        );
+        v.properties = Some(props);
+        let json = v.to_json();
+        let v2 = from_json(&json).unwrap();
+        assert_eq!(v, v2);
+    }
+
+    #[test]
+    fn round_trip_with_env_ref() {
+        let mut v = MOTLYValue::new();
+        let mut props = BTreeMap::new();
+        props.insert(
+            "path".to_string(),
+            MOTLYValue::with_eq(EqValue::EnvRef("HOME".to_string())),
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -550,13 +560,9 @@ mod tests {
     #[test]
     fn round_trip_array() {
         let arr = vec![
-            MOTLYNode::Value(MOTLYValue::with_eq(EqValue::Scalar(Scalar::String(
-                "a".to_string(),
-            )))),
-            MOTLYNode::Value(MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(2.0)))),
-            MOTLYNode::Ref(MOTLYRef {
-                link_to: "$root".to_string(),
-            }),
+            MOTLYValue::with_eq(EqValue::Scalar(Scalar::String("a".to_string()))),
+            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(2.0))),
+            MOTLYValue::with_eq(EqValue::Reference("$root".to_string())),
         ];
         let v = MOTLYValue::with_eq(EqValue::Array(arr));
         let json = v.to_json();
@@ -570,7 +576,7 @@ mod tests {
         let mut props = BTreeMap::new();
         props.insert(
             "x".to_string(),
-            MOTLYNode::Value(MOTLYValue::with_eq(EqValue::Scalar(Scalar::Boolean(false)))),
+            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Boolean(false))),
         );
         v.properties = Some(props);
         let json = v.to_json_pretty();
@@ -606,10 +612,7 @@ mod tests {
             Some(EqValue::Scalar(Scalar::String("hello".to_string())))
         );
         let props = v.properties.unwrap();
-        let sub = match props.get("sub").unwrap() {
-            MOTLYNode::Value(n) => n,
-            _ => panic!("expected Value"),
-        };
+        let sub = props.get("sub").unwrap();
         assert_eq!(sub.eq, Some(EqValue::Scalar(Scalar::Number(42.0))));
     }
 }

@@ -14,6 +14,10 @@ pub enum ScalarValue {
         ups: usize,
         path: Vec<RefPathSegment>,
     },
+    /// `@none` — clears the value slot
+    None,
+    /// `@env.IDENTIFIER` — environment variable reference
+    Env { name: String },
 }
 
 /// A segment in a reference path: either a named property or an array index.
@@ -40,21 +44,27 @@ pub struct ArrayElement {
 /// A parsed statement (the IR between the parser and interpreter).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    /// `name = value` optionally followed by `{ properties }` or `{ ... }`
+    /// `name = value` — set eq, preserve existing properties.
+    /// `name = value { props }` — set eq, merge properties.
     SetEq {
         path: Vec<String>,
         value: TagValue,
-        /// If present, the `{ ... }` block contained these statements (replace properties)
+        /// If present, merge these property statements into existing properties.
         properties: Option<Vec<Statement>>,
-        /// If true, `{ ... }` was used (preserve existing properties)
-        preserve_properties: bool,
     },
-    /// `name = { properties }` or `name: { properties }` or `name = ... { properties }`
+    /// `name := value` — assign value + clear properties.
+    /// `name := value { props }` — assign value + replace properties.
+    /// `name := $ref` — clone referenced subtree.
+    AssignBoth {
+        path: Vec<String>,
+        value: TagValue,
+        /// If present, replace properties with these statements.
+        properties: Option<Vec<Statement>>,
+    },
+    /// `name: { properties }` — preserve existing value, replace properties.
     ReplaceProperties {
         path: Vec<String>,
         properties: Vec<Statement>,
-        /// If true, `...` was used (preserve existing value)
-        preserve_value: bool,
     },
     /// `name { properties }` (merge semantics)
     UpdateProperties {

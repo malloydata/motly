@@ -68,5 +68,10 @@
     "name": "complex path valid",
     "input": "items = [{name = alice}, {name = bob}]  ref = $items[0].name",
     "expectedErrors": []
+  },
+  {
+    "name": "cloned reference unresolvable at new location",
+    "input": "wrapper { sibling = hello  source { ref = $^sibling } }  copy := $wrapper.source",
+    "expectedErrors": [{"code": "unresolved-reference", "path": ["copy", "ref"]}]
   }
 ]
