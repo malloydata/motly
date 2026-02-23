@@ -47,7 +47,7 @@ impl JsonWriter {
         }
     }
 
-    fn write_node(&mut self, node: &MOTLYValue) {
+    fn write_node(&mut self, node: &MOTLYNode) {
         self.buf.push('{');
         self.depth += 1;
 
@@ -79,11 +79,10 @@ impl JsonWriter {
         self.buf.push('}');
     }
 
-    fn write_eq(&mut self, eq: &EqValue) {
-        match eq {
-            EqValue::Scalar(scalar) => self.write_scalar(scalar),
-            EqValue::Array(arr) => self.write_array(arr),
-            EqValue::Reference(link_to) => {
+    fn write_property_value(&mut self, pv: &MOTLYPropertyValue) {
+        match pv {
+            MOTLYPropertyValue::Node(n) => self.write_node(n),
+            MOTLYPropertyValue::Ref(link_to) => {
                 // Serialize as {"linkTo": "..."}
                 self.buf.push('{');
                 self.depth += 1;
@@ -95,6 +94,13 @@ impl JsonWriter {
                 self.newline();
                 self.buf.push('}');
             }
+        }
+    }
+
+    fn write_eq(&mut self, eq: &EqValue) {
+        match eq {
+            EqValue::Scalar(scalar) => self.write_scalar(scalar),
+            EqValue::Array(arr) => self.write_array(arr),
             EqValue::EnvRef(name) => {
                 // Serialize as {"env": "..."}
                 self.buf.push('{');
@@ -140,7 +146,7 @@ impl JsonWriter {
         }
     }
 
-    fn write_array(&mut self, arr: &[MOTLYNode]) {
+    fn write_array(&mut self, arr: &[MOTLYPropertyValue]) {
         self.buf.push('[');
         self.depth += 1;
 
@@ -149,7 +155,7 @@ impl JsonWriter {
                 self.buf.push(',');
             }
             self.newline();
-            self.write_node(item);
+            self.write_property_value(item);
         }
 
         self.depth -= 1;
@@ -159,7 +165,7 @@ impl JsonWriter {
         self.buf.push(']');
     }
 
-    fn write_properties(&mut self, props: &std::collections::BTreeMap<String, MOTLYNode>) {
+    fn write_properties(&mut self, props: &std::collections::BTreeMap<String, MOTLYPropertyValue>) {
         self.buf.push('{');
         self.depth += 1;
 
@@ -167,7 +173,7 @@ impl JsonWriter {
         for (key, value) in props {
             self.entry_sep(&mut first);
             self.write_key(key);
-            self.write_node(value);
+            self.write_property_value(value);
         }
 
         self.depth -= 1;
@@ -213,21 +219,21 @@ impl JsonWriter {
 
 use std::fmt::Write;
 
-/// Serialize a MOTLYValue to a compact JSON string (no whitespace).
-pub fn to_json(node: &MOTLYValue) -> String {
+/// Serialize a MOTLYNode to a compact JSON string (no whitespace).
+pub fn to_json(node: &MOTLYNode) -> String {
     let mut w = JsonWriter::new(JsonStyle::Compact);
     w.write_node(node);
     w.buf
 }
 
-/// Serialize a MOTLYValue to a pretty-printed JSON string (2-space indent).
-pub fn to_json_pretty(node: &MOTLYValue) -> String {
+/// Serialize a MOTLYNode to a pretty-printed JSON string (2-space indent).
+pub fn to_json_pretty(node: &MOTLYNode) -> String {
     let mut w = JsonWriter::new(JsonStyle::Pretty);
     w.write_node(node);
     w.buf
 }
 
-/// Serialize a MOTLYValue to the internal wire format.
+/// Serialize a MOTLYNode to the internal wire format.
 ///
 /// "Wire format" is the JSON dialect used to transfer data between the
 /// Rust WASM module and the TypeScript wrapper layer. It is *not* the
@@ -237,7 +243,7 @@ pub fn to_json_pretty(node: &MOTLYValue) -> String {
 /// are wrapped as `{"$date": "2024-01-15"}` instead of bare strings.
 /// This lets the TypeScript layer distinguish dates from strings and
 /// construct JS `Date` objects, which plain JSON cannot represent.
-pub fn to_wire(node: &MOTLYValue) -> String {
+pub fn to_wire(node: &MOTLYNode) -> String {
     let mut w = JsonWriter::new(JsonStyle::Compact);
     w.wire = true;
     w.write_node(node);

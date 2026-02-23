@@ -3,9 +3,9 @@ use crate::error::{MOTLYError, Position};
 use crate::tree::*;
 use std::collections::BTreeMap;
 
-/// Execute a list of parsed statements against an existing MOTLYValue,
+/// Execute a list of parsed statements against an existing MOTLYNode,
 /// mutating it in place and returning any non-fatal errors.
-pub fn execute(statements: &[Statement], root: &mut MOTLYValue) -> Vec<MOTLYError> {
+pub fn execute(statements: &[Statement], root: &mut MOTLYNode) -> Vec<MOTLYError> {
     let mut errors = Vec::new();
     for stmt in statements {
         execute_statement(stmt, root, &mut errors);
@@ -13,7 +13,7 @@ pub fn execute(statements: &[Statement], root: &mut MOTLYValue) -> Vec<MOTLYErro
     errors
 }
 
-fn execute_statement(stmt: &Statement, node: &mut MOTLYValue, errors: &mut Vec<MOTLYError>) {
+fn execute_statement(stmt: &Statement, node: &mut MOTLYNode, errors: &mut Vec<MOTLYError>) {
     match stmt {
         Statement::SetEq {
             path,
@@ -41,20 +41,48 @@ fn execute_statement(stmt: &Statement, node: &mut MOTLYValue, errors: &mut Vec<M
 
 /// `name = value` — set eq, preserve existing properties.
 /// `name = value { props }` — set eq, then merge properties.
+///
+/// Special case: `name = $ref` inserts a MOTLYPropertyValue::Ref directly.
+/// `name = $ref { props }` produces a non-fatal error (ref created, props ignored).
 fn execute_set_eq(
-    node: &mut MOTLYValue,
+    node: &mut MOTLYNode,
     path: &[String],
     value: &TagValue,
     properties: Option<&[Statement]>,
     errors: &mut Vec<MOTLYError>,
 ) {
+    // Special case: reference value → insert as MOTLYPropertyValue::Ref
+    if let TagValue::Scalar(ScalarValue::Reference { ups, path: ref_path }) = value {
+        let ref_str = format_ref_string(*ups, ref_path);
+        if properties.is_some() {
+            let zero = Position {
+                line: 0,
+                column: 0,
+                offset: 0,
+            };
+            errors.push(MOTLYError {
+                code: "ref-with-properties".to_string(),
+                message: "Cannot add properties to a reference. Did you mean := (clone)?"
+                    .to_string(),
+                begin: zero,
+                end: zero,
+            });
+        }
+        let (write_key, parent) = build_access_path(node, path);
+        parent
+            .get_or_create_properties()
+            .insert(write_key, MOTLYPropertyValue::Ref(ref_str));
+        return;
+    }
+
     let (write_key, parent) = build_access_path(node, path);
     let props = parent.get_or_create_properties();
 
     // Get or create target (preserves existing node and its properties)
-    let target = props
+    let target_pv = props
         .entry(write_key)
-        .or_insert_with(MOTLYValue::new);
+        .or_insert_with(MOTLYPropertyValue::new_node);
+    let target = target_pv.ensure_node();
 
     // Set the value slot
     set_eq_slot(target, value, errors);
@@ -72,7 +100,7 @@ fn execute_set_eq(
 /// `name := $ref` — clone the referenced subtree.
 /// `name := $ref { props }` — clone + replace properties.
 fn execute_assign_both(
-    node: &mut MOTLYValue,
+    node: &mut MOTLYNode,
     path: &[String],
     value: &TagValue,
     properties: Option<&[Statement]>,
@@ -96,7 +124,9 @@ fn execute_assign_both(
                     }
                 }
                 let (write_key, parent) = build_access_path(node, path);
-                parent.get_or_create_properties().insert(write_key, cloned);
+                parent
+                    .get_or_create_properties()
+                    .insert(write_key, MOTLYPropertyValue::Node(cloned));
             }
             Err(err) => {
                 // Fatal clone error — push it and don't create the node
@@ -105,7 +135,7 @@ fn execute_assign_both(
         }
     } else {
         // Literal value: create fresh node (replaces everything)
-        let mut result = MOTLYValue::new();
+        let mut result = MOTLYNode::new();
         set_eq_slot(&mut result, value, errors);
         if let Some(prop_stmts) = properties {
             for s in prop_stmts {
@@ -115,36 +145,39 @@ fn execute_assign_both(
         let (write_key, parent) = build_access_path(node, path);
         parent
             .get_or_create_properties()
-            .insert(write_key, result);
+            .insert(write_key, MOTLYPropertyValue::Node(result));
     }
 }
 
 /// `name: { props }` — preserve existing value, replace properties.
 fn execute_replace_properties(
-    node: &mut MOTLYValue,
+    node: &mut MOTLYNode,
     path: &[String],
     properties: &[Statement],
     errors: &mut Vec<MOTLYError>,
 ) {
     let (write_key, parent) = build_access_path(node, path);
 
-    let mut result = MOTLYValue::new();
+    let mut result = MOTLYNode::new();
 
-    // Always preserve the existing value
+    // Always preserve the existing value (if it's a node)
     let parent_props = parent.get_or_create_properties();
-    if let Some(existing) = parent_props.get(&write_key) {
-        result.eq = existing.eq.clone();
+    if let Some(existing_pv) = parent_props.get(&write_key) {
+        if let MOTLYPropertyValue::Node(existing) = existing_pv {
+            result.eq = existing.eq.clone();
+        }
+        // If it was a Ref, we're replacing it with a node (no eq to preserve)
     }
 
     for stmt in properties {
         execute_statement(stmt, &mut result, errors);
     }
 
-    parent_props.insert(write_key, result);
+    parent_props.insert(write_key, MOTLYPropertyValue::Node(result));
 }
 
 fn execute_update_properties(
-    node: &mut MOTLYValue,
+    node: &mut MOTLYNode,
     path: &[String],
     properties: &[Statement],
     errors: &mut Vec<MOTLYError>,
@@ -154,37 +187,38 @@ fn execute_update_properties(
     let props = parent.get_or_create_properties();
 
     // Get or create the target node (merging semantics - preserves existing)
-    let target = props
+    let target_pv = props
         .entry(write_key)
-        .or_insert_with(MOTLYValue::new);
+        .or_insert_with(MOTLYPropertyValue::new_node);
+    let target = target_pv.ensure_node();
 
     for stmt in properties {
         execute_statement(stmt, target, errors);
     }
 }
 
-fn execute_define(node: &mut MOTLYValue, path: &[String], deleted: bool) {
+fn execute_define(node: &mut MOTLYNode, path: &[String], deleted: bool) {
     let (write_key, parent) = build_access_path(node, path);
 
     if deleted {
         parent
             .get_or_create_properties()
-            .insert(write_key, MOTLYValue::deleted());
+            .insert(write_key, MOTLYPropertyValue::Node(MOTLYNode::deleted()));
     } else {
         // Get-or-create: if node already exists, leave it alone
         parent
             .get_or_create_properties()
             .entry(write_key)
-            .or_insert_with(MOTLYValue::new);
+            .or_insert_with(MOTLYPropertyValue::new_node);
     }
 }
 
 /// Navigate to the parent of the final path segment, creating intermediate
 /// nodes as needed. Returns (final_key, parent_node).
 fn build_access_path<'a>(
-    node: &'a mut MOTLYValue,
+    node: &'a mut MOTLYNode,
     path: &[String],
-) -> (String, &'a mut MOTLYValue) {
+) -> (String, &'a mut MOTLYNode) {
     assert!(!path.is_empty(), "path must not be empty");
 
     let mut current = node;
@@ -194,16 +228,18 @@ fn build_access_path<'a>(
 
         let entry = props
             .entry(segment.clone())
-            .or_insert_with(MOTLYValue::new);
+            .or_insert_with(MOTLYPropertyValue::new_node);
 
-        current = entry;
+        current = entry.ensure_node();
     }
 
     (path.last().unwrap().clone(), current)
 }
 
 /// Set the eq slot on a target node from a TagValue.
-fn set_eq_slot(target: &mut MOTLYValue, value: &TagValue, errors: &mut Vec<MOTLYError>) {
+/// References are NOT handled here — they become MOTLYPropertyValue::Ref
+/// at the caller level.
+fn set_eq_slot(target: &mut MOTLYNode, value: &TagValue, errors: &mut Vec<MOTLYError>) {
     match value {
         TagValue::Array(elements) => {
             target.eq = Some(EqValue::Array(resolve_array(elements, errors)));
@@ -221,8 +257,10 @@ fn set_eq_slot(target: &mut MOTLYValue, value: &TagValue, errors: &mut Vec<MOTLY
             ScalarValue::Date(d) => {
                 target.eq = Some(EqValue::Scalar(Scalar::Date(d.clone())));
             }
-            ScalarValue::Reference { ups, path } => {
-                target.eq = Some(EqValue::Reference(format_ref_string(*ups, path)));
+            ScalarValue::Reference { .. } => {
+                // References are handled by the caller (execute_set_eq / resolve_array_element).
+                // They become MOTLYPropertyValue::Ref, not part of the eq slot.
+                unreachable!("References should be handled before calling set_eq_slot");
             }
             ScalarValue::Env { name } => {
                 target.eq = Some(EqValue::EnvRef(name.clone()));
@@ -234,16 +272,42 @@ fn set_eq_slot(target: &mut MOTLYValue, value: &TagValue, errors: &mut Vec<MOTLY
     }
 }
 
-/// Resolve an array of AST elements to MOTLYNodes.
-fn resolve_array(elements: &[ArrayElement], errors: &mut Vec<MOTLYError>) -> Vec<MOTLYNode> {
+/// Resolve an array of AST elements to MOTLYPropertyValues.
+fn resolve_array(
+    elements: &[ArrayElement],
+    errors: &mut Vec<MOTLYError>,
+) -> Vec<MOTLYPropertyValue> {
     elements
         .iter()
         .map(|el| resolve_array_element(el, errors))
         .collect()
 }
 
-fn resolve_array_element(el: &ArrayElement, errors: &mut Vec<MOTLYError>) -> MOTLYNode {
-    let mut node = MOTLYValue::new();
+fn resolve_array_element(
+    el: &ArrayElement,
+    errors: &mut Vec<MOTLYError>,
+) -> MOTLYPropertyValue {
+    // Check if the element value is a reference → becomes MOTLYPropertyValue::Ref
+    if let Some(TagValue::Scalar(ScalarValue::Reference { ups, path })) = &el.value {
+        let ref_str = format_ref_string(*ups, path);
+        if el.properties.is_some() {
+            let zero = Position {
+                line: 0,
+                column: 0,
+                offset: 0,
+            };
+            errors.push(MOTLYError {
+                code: "ref-with-properties".to_string(),
+                message: "Cannot add properties to a reference. Did you mean := (clone)?"
+                    .to_string(),
+                begin: zero,
+                end: zero,
+            });
+        }
+        return MOTLYPropertyValue::Ref(ref_str);
+    }
+
+    let mut node = MOTLYNode::new();
 
     if let Some(ref value) = el.value {
         set_eq_slot(&mut node, value, errors);
@@ -255,7 +319,7 @@ fn resolve_array_element(el: &ArrayElement, errors: &mut Vec<MOTLYError>) -> MOT
         }
     }
 
-    node
+    MOTLYPropertyValue::Node(node)
 }
 
 /// Format a reference path back to its string form: `$^^name[0].sub`
@@ -286,14 +350,14 @@ fn format_ref_string(ups: usize, path: &[RefPathSegment]) -> String {
 
 /// Resolve a reference path in the tree and return a deep clone.
 fn resolve_and_clone(
-    root: &MOTLYValue,
+    root: &MOTLYNode,
     stmt_path: &[String],
     ups: usize,
     ref_path: &[RefPathSegment],
-) -> Result<MOTLYValue, MOTLYError> {
+) -> Result<MOTLYNode, MOTLYError> {
     let ref_str = format_ref_string(ups, ref_path);
 
-    let start: &MOTLYValue;
+    let start: &MOTLYNode;
 
     if ups == 0 {
         // Absolute reference: start at root
@@ -313,7 +377,13 @@ fn resolve_and_clone(
                         .as_ref()
                         .and_then(|p| p.get(&stmt_path[i]))
                     {
-                        Some(child) => current = child,
+                        Some(MOTLYPropertyValue::Node(child)) => current = child,
+                        Some(MOTLYPropertyValue::Ref(_)) => {
+                            return Err(clone_error(format!(
+                                "Clone reference {} could not be resolved: path segment \"{}\" is a link reference",
+                                ref_str, stmt_path[i]
+                            )));
+                        }
                         None => {
                             return Err(clone_error(format!(
                                 "Clone reference {} could not be resolved: path segment \"{}\" not found",
@@ -340,8 +410,18 @@ fn resolve_and_clone(
     for seg in ref_path {
         match seg {
             RefPathSegment::Name(name) => {
-                match current.properties.as_ref().and_then(|p| p.get(name.as_str())) {
-                    Some(child) => current = child,
+                match current
+                    .properties
+                    .as_ref()
+                    .and_then(|p| p.get(name.as_str()))
+                {
+                    Some(MOTLYPropertyValue::Node(child)) => current = child,
+                    Some(MOTLYPropertyValue::Ref(_)) => {
+                        return Err(clone_error(format!(
+                            "Clone reference {} could not be resolved: property \"{}\" is a link reference",
+                            ref_str, name
+                        )));
+                    }
                     None => {
                         return Err(clone_error(format!(
                             "Clone reference {} could not be resolved: property \"{}\" not found",
@@ -359,7 +439,15 @@ fn resolve_and_clone(
                                 ref_str, idx, arr.len()
                             )));
                         }
-                        current = &arr[*idx];
+                        match &arr[*idx] {
+                            MOTLYPropertyValue::Node(child) => current = child,
+                            MOTLYPropertyValue::Ref(_) => {
+                                return Err(clone_error(format!(
+                                    "Clone reference {} could not be resolved: index [{}] is a link reference",
+                                    ref_str, idx
+                                )));
+                            }
+                        }
                     }
                     _ => {
                         return Err(clone_error(format!(
@@ -392,37 +480,50 @@ fn clone_error(message: String) -> MOTLYError {
 /// Walk a cloned subtree and null out any relative (^) references that
 /// escape the clone boundary. A reference at depth D with N ups escapes
 /// if N > D. Absolute references (ups=0) are left alone.
-fn sanitize_cloned_refs(node: &mut MOTLYValue, depth: usize, errors: &mut Vec<MOTLYError>) {
-    if let Some(EqValue::Reference(ref link_to)) = node.eq {
-        let parsed_ups = parse_ref_ups(link_to);
-        if parsed_ups > 0 && parsed_ups > depth {
-            let zero = Position {
-                line: 0,
-                column: 0,
-                offset: 0,
-            };
-            errors.push(MOTLYError {
-                code: "clone-reference-out-of-scope".to_string(),
-                message: format!(
-                    "Cloned reference \"{}\" escapes the clone boundary ({} level(s) up from depth {})",
-                    link_to, parsed_ups, depth
-                ),
-                begin: zero,
-                end: zero,
-            });
-            node.eq = None;
-        }
-    }
-
+fn sanitize_cloned_refs(node: &mut MOTLYNode, depth: usize, errors: &mut Vec<MOTLYError>) {
     if let Some(EqValue::Array(ref mut arr)) = node.eq {
         for elem in arr.iter_mut() {
-            sanitize_cloned_refs(elem, depth + 1, errors);
+            sanitize_cloned_pv(elem, depth + 1, errors);
         }
     }
 
     if let Some(ref mut props) = node.properties {
         for (_key, child) in props.iter_mut() {
-            sanitize_cloned_refs(child, depth + 1, errors);
+            sanitize_cloned_pv(child, depth + 1, errors);
+        }
+    }
+}
+
+/// Sanitize a single MOTLYPropertyValue within a cloned subtree.
+fn sanitize_cloned_pv(
+    pv: &mut MOTLYPropertyValue,
+    depth: usize,
+    errors: &mut Vec<MOTLYError>,
+) {
+    match pv {
+        MOTLYPropertyValue::Ref(ref link_to) => {
+            let parsed_ups = parse_ref_ups(link_to);
+            if parsed_ups > 0 && parsed_ups > depth {
+                let zero = Position {
+                    line: 0,
+                    column: 0,
+                    offset: 0,
+                };
+                errors.push(MOTLYError {
+                    code: "clone-reference-out-of-scope".to_string(),
+                    message: format!(
+                        "Cloned reference \"{}\" escapes the clone boundary ({} level(s) up from depth {})",
+                        link_to, parsed_ups, depth
+                    ),
+                    begin: zero,
+                    end: zero,
+                });
+                // Convert to empty node (equivalent to old node.eq = None)
+                *pv = MOTLYPropertyValue::Node(MOTLYNode::new());
+            }
+        }
+        MOTLYPropertyValue::Node(node) => {
+            sanitize_cloned_refs(node, depth, errors);
         }
     }
 }

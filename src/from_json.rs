@@ -1,9 +1,9 @@
 use crate::tree::*;
 use std::collections::BTreeMap;
 
-/// Deserialize a JSON string into a MOTLYValue.
+/// Deserialize a JSON string into a MOTLYNode.
 /// This is the inverse of `json::to_json`.
-pub fn from_json(input: &str) -> Result<MOTLYValue, String> {
+pub fn from_json(input: &str) -> Result<MOTLYNode, String> {
     let mut p = JsonParser::new(input);
     let value = p.parse_node()?;
     p.skip_ws();
@@ -13,14 +13,14 @@ pub fn from_json(input: &str) -> Result<MOTLYValue, String> {
     Ok(value)
 }
 
-/// Deserialize a wire-format JSON string into a MOTLYValue.
+/// Deserialize a wire-format JSON string into a MOTLYNode.
 ///
 /// Wire format is the internal JSON dialect used between the Rust WASM
 /// module and the TypeScript wrapper. The only difference from standard
 /// JSON is that `{"$date": "..."}` in scalar positions is recognized as
 /// `Scalar::Date` rather than being treated as an unknown object.
 /// See `json::to_wire` for the serialization counterpart.
-pub fn from_wire(input: &str) -> Result<MOTLYValue, String> {
+pub fn from_wire(input: &str) -> Result<MOTLYNode, String> {
     let mut p = JsonParser::new(input);
     p.wire = true;
     let value = p.parse_node()?;
@@ -226,13 +226,13 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    /// Parse a JSON object that represents a MOTLYNode (which is now just MOTLYValue).
-    /// References are represented as eq: {"linkTo": "..."} and env refs as eq: {"env": "..."}.
-    fn parse_node(&mut self) -> Result<MOTLYValue, String> {
+    /// Parse a JSON object that represents a MOTLYNode.
+    /// Nodes have optional "deleted", "eq", and "properties" keys.
+    fn parse_node(&mut self) -> Result<MOTLYNode, String> {
         self.expect(b'{')?;
 
         let mut eq: Option<EqValue> = None;
-        let mut properties: Option<BTreeMap<String, MOTLYNode>> = None;
+        let mut properties: Option<BTreeMap<String, MOTLYPropertyValue>> = None;
         let mut deleted = false;
 
         if self.peek() != Some(b'}') {
@@ -269,15 +269,48 @@ impl<'a> JsonParser<'a> {
 
         self.expect(b'}')?;
 
-        Ok(MOTLYValue {
+        Ok(MOTLYNode {
             eq,
             properties,
             deleted,
         })
     }
 
+    /// Parse a property value: either a node or a link reference.
+    /// Peeks at the JSON object to determine which variant.
+    fn parse_property_value(&mut self) -> Result<MOTLYPropertyValue, String> {
+        self.skip_ws();
+        // Must be an object — peek inside to check for "linkTo"
+        let saved_pos = self.pos;
+        self.expect(b'{')?;
+
+        // Peek at the first key
+        if self.peek() == Some(b'"') {
+            let key = self.parse_string()?;
+
+            if key == "linkTo" {
+                // This is a Ref: {"linkTo": "..."}
+                self.expect(b':')?;
+                let value = self.parse_string()?;
+                self.expect(b'}')?;
+                return Ok(MOTLYPropertyValue::Ref(value));
+            }
+
+            // Not a linkTo — restore position and parse as a full node
+            self.pos = saved_pos;
+            let node = self.parse_node()?;
+            return Ok(MOTLYPropertyValue::Node(node));
+        }
+
+        // Empty object {} or starts with non-string — restore and parse as node
+        self.pos = saved_pos;
+        let node = self.parse_node()?;
+        Ok(MOTLYPropertyValue::Node(node))
+    }
+
     /// Parse an eq value: a scalar, an array, or a special object
-    /// (`{"$date": "..."}` in wire mode, `{"linkTo": "..."}`, or `{"env": "..."}`).
+    /// (`{"$date": "..."}` in wire mode, or `{"env": "..."}`).
+    /// References are NOT in eq anymore — they are at the property value level.
     fn parse_eq(&mut self) -> Result<EqValue, String> {
         match self.peek() {
             Some(b'[') => {
@@ -285,7 +318,7 @@ impl<'a> JsonParser<'a> {
                 Ok(EqValue::Array(arr))
             }
             Some(b'{') => {
-                // Could be: {"$date": "..."} (wire mode), {"linkTo": "..."}, or {"env": "..."}
+                // Could be: {"$date": "..."} (wire mode) or {"env": "..."}
                 let saved_pos = self.pos;
                 self.expect(b'{')?;
                 let key = self.parse_string()?;
@@ -296,11 +329,6 @@ impl<'a> JsonParser<'a> {
                         let value = self.parse_string()?;
                         self.expect(b'}')?;
                         Ok(EqValue::Scalar(Scalar::Date(value)))
-                    }
-                    "linkTo" => {
-                        let value = self.parse_string()?;
-                        self.expect(b'}')?;
-                        Ok(EqValue::Reference(value))
                     }
                     "env" => {
                         let value = self.parse_string()?;
@@ -351,15 +379,15 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    /// Parse a JSON array of MOTLYNode values.
-    fn parse_array(&mut self) -> Result<Vec<MOTLYNode>, String> {
+    /// Parse a JSON array of MOTLYPropertyValue values.
+    fn parse_array(&mut self) -> Result<Vec<MOTLYPropertyValue>, String> {
         self.expect(b'[')?;
         let mut arr = Vec::new();
 
         if self.peek() != Some(b']') {
             loop {
-                let node = self.parse_node()?;
-                arr.push(node);
+                let pv = self.parse_property_value()?;
+                arr.push(pv);
 
                 self.skip_ws();
                 if self.pos < self.input.len() && self.input[self.pos] == b',' {
@@ -374,8 +402,8 @@ impl<'a> JsonParser<'a> {
         Ok(arr)
     }
 
-    /// Parse a JSON object as a BTreeMap<String, MOTLYNode>.
-    fn parse_properties(&mut self) -> Result<BTreeMap<String, MOTLYNode>, String> {
+    /// Parse a JSON object as a BTreeMap<String, MOTLYPropertyValue>.
+    fn parse_properties(&mut self) -> Result<BTreeMap<String, MOTLYPropertyValue>, String> {
         self.expect(b'{')?;
         let mut map = BTreeMap::new();
 
@@ -383,7 +411,7 @@ impl<'a> JsonParser<'a> {
             loop {
                 let key = self.parse_string()?;
                 self.expect(b':')?;
-                let value = self.parse_node()?;
+                let value = self.parse_property_value()?;
                 map.insert(key, value);
 
                 self.skip_ws();
@@ -473,7 +501,7 @@ mod tests {
 
     #[test]
     fn round_trip_empty() {
-        let v = MOTLYValue::new();
+        let v = MOTLYNode::new();
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -481,7 +509,7 @@ mod tests {
 
     #[test]
     fn round_trip_scalar_string() {
-        let v = MOTLYValue::with_eq(EqValue::Scalar(Scalar::String("hello".to_string())));
+        let v = MOTLYNode::with_eq(EqValue::Scalar(Scalar::String("hello".to_string())));
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -489,7 +517,7 @@ mod tests {
 
     #[test]
     fn round_trip_scalar_number() {
-        let v = MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(42.0)));
+        let v = MOTLYNode::with_eq(EqValue::Scalar(Scalar::Number(42.0)));
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -497,7 +525,7 @@ mod tests {
 
     #[test]
     fn round_trip_scalar_boolean() {
-        let v = MOTLYValue::with_eq(EqValue::Scalar(Scalar::Boolean(true)));
+        let v = MOTLYNode::with_eq(EqValue::Scalar(Scalar::Boolean(true)));
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -505,7 +533,7 @@ mod tests {
 
     #[test]
     fn round_trip_deleted() {
-        let v = MOTLYValue::deleted();
+        let v = MOTLYNode::deleted();
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -513,15 +541,15 @@ mod tests {
 
     #[test]
     fn round_trip_with_properties() {
-        let mut v = MOTLYValue::new();
+        let mut v = MOTLYNode::new();
         let mut props = BTreeMap::new();
         props.insert(
             "name".to_string(),
-            MOTLYValue::with_eq(EqValue::Scalar(Scalar::String("test".to_string()))),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::String("test".to_string())))),
         );
         props.insert(
             "count".to_string(),
-            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(5.0))),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::Number(5.0)))),
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -531,11 +559,11 @@ mod tests {
 
     #[test]
     fn round_trip_with_ref() {
-        let mut v = MOTLYValue::new();
+        let mut v = MOTLYNode::new();
         let mut props = BTreeMap::new();
         props.insert(
             "link".to_string(),
-            MOTLYValue::with_eq(EqValue::Reference("$^parent.name".to_string())),
+            MOTLYPropertyValue::Ref("$^parent.name".to_string()),
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -545,11 +573,11 @@ mod tests {
 
     #[test]
     fn round_trip_with_env_ref() {
-        let mut v = MOTLYValue::new();
+        let mut v = MOTLYNode::new();
         let mut props = BTreeMap::new();
         props.insert(
             "path".to_string(),
-            MOTLYValue::with_eq(EqValue::EnvRef("HOME".to_string())),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::EnvRef("HOME".to_string()))),
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -560,11 +588,11 @@ mod tests {
     #[test]
     fn round_trip_array() {
         let arr = vec![
-            MOTLYValue::with_eq(EqValue::Scalar(Scalar::String("a".to_string()))),
-            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(2.0))),
-            MOTLYValue::with_eq(EqValue::Reference("$root".to_string())),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::String("a".to_string())))),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::Number(2.0)))),
+            MOTLYPropertyValue::Ref("$root".to_string()),
         ];
-        let v = MOTLYValue::with_eq(EqValue::Array(arr));
+        let v = MOTLYNode::with_eq(EqValue::Array(arr));
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -572,11 +600,11 @@ mod tests {
 
     #[test]
     fn round_trip_pretty() {
-        let mut v = MOTLYValue::new();
+        let mut v = MOTLYNode::new();
         let mut props = BTreeMap::new();
         props.insert(
             "x".to_string(),
-            MOTLYValue::with_eq(EqValue::Scalar(Scalar::Boolean(false))),
+            MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::Boolean(false)))),
         );
         v.properties = Some(props);
         let json = v.to_json_pretty();
@@ -586,7 +614,7 @@ mod tests {
 
     #[test]
     fn round_trip_escaped_string() {
-        let v = MOTLYValue::with_eq(EqValue::Scalar(Scalar::String(
+        let v = MOTLYNode::with_eq(EqValue::Scalar(Scalar::String(
             "line1\nline2\ttab\"quote\\back".to_string(),
         )));
         let json = v.to_json();
@@ -596,7 +624,7 @@ mod tests {
 
     #[test]
     fn round_trip_negative_number() {
-        let v = MOTLYValue::with_eq(EqValue::Scalar(Scalar::Number(-3.14)));
+        let v = MOTLYNode::with_eq(EqValue::Scalar(Scalar::Number(-3.14)));
         let json = v.to_json();
         let v2 = from_json(&json).unwrap();
         assert_eq!(v, v2);
@@ -612,7 +640,10 @@ mod tests {
             Some(EqValue::Scalar(Scalar::String("hello".to_string())))
         );
         let props = v.properties.unwrap();
-        let sub = props.get("sub").unwrap();
+        let sub = match props.get("sub").unwrap() {
+            MOTLYPropertyValue::Node(n) => n,
+            _ => panic!("Expected Node"),
+        };
         assert_eq!(sub.eq, Some(EqValue::Scalar(Scalar::Number(42.0))));
     }
 }

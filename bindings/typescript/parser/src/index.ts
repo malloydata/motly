@@ -4,6 +4,7 @@ export type {
   MOTLYEnvRef,
   MOTLYValue,
   MOTLYNode,
+  MOTLYPropertyValue,
   MOTLYError,
   MOTLYSchemaError,
   MOTLYValidationError,

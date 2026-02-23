@@ -1,5 +1,5 @@
 import {
-  MOTLYValue,
+  MOTLYNode,
   MOTLYError,
   MOTLYSchemaError,
   MOTLYValidationError,
@@ -7,7 +7,7 @@ import {
 import { parse } from "./parser";
 import { execute } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
-import { cloneValue } from "./clone";
+import { cloneNode } from "./clone";
 
 /**
  * A stateful MOTLY parsing session.
@@ -16,8 +16,8 @@ import { cloneValue } from "./clone";
  * API-compatible with the Rust `MotlySession`.
  */
 export class MOTLYSession {
-  private value: MOTLYValue = {};
-  private schema: MOTLYValue | null = null;
+  private value: MOTLYNode = {};
+  private schema: MOTLYNode | null = null;
   private disposed = false;
 
   /**
@@ -44,7 +44,7 @@ export class MOTLYSession {
     this.ensureAlive();
     try {
       const stmts = parse(source);
-      const fresh: MOTLYValue = {};
+      const fresh: MOTLYNode = {};
       const errors = execute(stmts, fresh);
       this.schema = fresh;
       return errors;
@@ -65,9 +65,9 @@ export class MOTLYSession {
   /**
    * Return a deep clone of the session's current value.
    */
-  getValue(): MOTLYValue {
+  getValue(): MOTLYNode {
     this.ensureAlive();
-    return cloneValue(this.value);
+    return cloneNode(this.value);
   }
 
   /**
@@ -113,4 +113,3 @@ function isMotlyError(e: unknown): e is MOTLYError {
     "end" in e
   );
 }
-

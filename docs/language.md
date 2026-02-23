@@ -142,6 +142,28 @@ scheduled = @2024-01-15T10:30:00+05:00
 precise = @2024-01-15T10:30:00.123Z
 ```
 
+### Environment References
+
+Environment references use `@env.` followed by a name to defer a value to the runtime environment:
+
+```motly
+database: {
+  password = @env.DB_PASSWORD
+  host = @env.DB_HOST
+}
+```
+
+An environment reference is a **value** — it occupies the `eq` slot of a node. This means a node can have an env ref AND its own properties:
+
+```motly
+database = @env.DB_URL {
+  pool_size = 10
+  timeout = 5000
+}
+```
+
+Environment references are distinct from `$` references (which are structural links between nodes). An `@env` ref says "this node's value comes from the environment"; a `$` ref says "this node IS that other node."
+
 ### Arrays
 
 Arrays are enclosed in square brackets. Elements are separated by commas. Trailing commas are allowed:
@@ -191,7 +213,7 @@ items = [
 
 Every named entry in MOTLY is a **node**. A node has two independent aspects:
 
-- A **value** — a scalar (string, number, boolean, date, `@none`, or reference)
+- A **value** — a scalar (string, number, boolean, date, `@none`, or env reference)
 - **Properties** — a map of child nodes
 
 This dual nature reflects how humans naturally think about things. A font isn't a bag of attributes with a `family` field — it *is* Helvetica, and it *has* properties:
@@ -555,6 +577,7 @@ Use the `x-` prefix for organization-specific schema codes (e.g., `x-acme-deploy
 | `@true` / `@false` | Boolean | `enabled = @true` |
 | `@none` | No value | `name = @none` |
 | `@2024-01-15` | Date | `created = @2024-01-15` |
+| `@env.NAME` | Environment reference | `password = @env.DB_PASSWORD` |
 | `name` | Flag (define) | `hidden` |
 | `-key` | Delete property | `-deprecated_field` |
 | `-...` | Delete all properties | `-...` |

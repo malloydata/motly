@@ -20,7 +20,7 @@ src/
   ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment
   parser.rs        — Recursive descent parser, produces Vec<Statement>
   interpreter.rs   — Executes statements against a MOTLYValue tree (mutates in place)
-  tree.rs          — Output types: MOTLYValue, MOTLYNode (= MOTLYValue), Scalar, EqValue
+  tree.rs          — Output types: MOTLYNode, MOTLYPropertyValue, Scalar, EqValue
   validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
   json.rs          — JSON serialization (compact, pretty, wire format with $date)
@@ -32,7 +32,7 @@ src/
 bindings/typescript/
   interface/           — "motly-ts-interface" package (shared types, private)
     src/
-      types.ts         — TypeScript types (MOTLYValue, MOTLYNode, MOTLYRef, etc.)
+      types.ts         — TypeScript types (MOTLYNode, MOTLYPropertyValue, MOTLYRef, etc.)
 
   parser/              — "@malloydata/motly-ts-parser" npm package (pure TypeScript)
     src/
@@ -64,7 +64,7 @@ test-data/
 
 Full reference: `docs/language.md`. EBNF grammar is at the end of that file.
 
-Every node has two independent slots: a **value** (scalar, array, reference, or `@none`) and **properties** (a map of child nodes). The three core operators each control a different combination:
+Every node has two independent slots: a **value** (scalar, array, env reference, or `@none`) and **properties** (a map of child nodes or link references). The three core operators each control a different combination:
 
 - **`=`** — sets the value, never touches properties
 - **`:`** — replaces properties, never touches the value
@@ -77,13 +77,13 @@ Merge (preserving existing properties) uses space-before-brace: `name { }`. See 
 Both implementations (Rust and pure TS) follow the same pipeline:
 
 ```
-source text → Parser → Vec<Statement> → Interpreter → MOTLYValue tree
+source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
                                                             ↓
                                               Validator (schema + references)
 ```
 
 1. **Parser** (`parser.rs` / `parser.ts`): recursive descent, produces a list of `Statement` AST nodes
-2. **Interpreter** (`interpreter.rs` / `interpreter.ts`): executes statements against a `MOTLYValue`, handling merge/replace/delete semantics
+2. **Interpreter** (`interpreter.rs` / `interpreter.ts`): executes statements against a `MOTLYNode`, handling merge/replace/delete semantics
 3. **Validator** (`validate.rs` / `validate.ts`): optional schema validation and reference resolution
 
 ### Key types
@@ -95,11 +95,12 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYValue tree
 - `ArrayElement` — value + optional properties
 
 **Output tree** (public API):
-- `MOTLYValue` — has optional `eq` (scalar/array/reference/env-ref), optional `properties` (map of children), optional `deleted` flag
-- `MOTLYNode` = `MOTLYValue` — references live in the `eq` slot as `EqValue::Reference` (Rust) or `{ linkTo }` (TS)
-- Environment refs live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS)
+- `MOTLYNode` — has optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYPropertyValue`), optional `deleted` flag
+- `MOTLYPropertyValue` — either a `MOTLYNode` or a link reference (`MOTLYPropertyValue::Ref(String)` in Rust, `{ linkTo }` in TS)
+- Link references (`$ref`) are a `MOTLYPropertyValue` variant — they replace the entire node (no own eq or properties)
+- Environment refs (`@env.NAME`) live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS) — they are values, so a node can have an env ref AND properties
 
-The interpreter mutates the `MOTLYValue` tree in place (does not return a new value).
+The interpreter mutates the `MOTLYNode` tree in place (does not return a new value).
 
 ### Property key ordering
 
@@ -130,7 +131,7 @@ class MOTLYSession {
   parse(source: string): MOTLYError[];           // parse + apply to value
   parseSchema(source: string): MOTLYError[];     // parse as schema
   reset(): void;                                  // clear value, keep schema
-  getValue(): MOTLYValue;                         // deep clone of current value
+  getValue(): MOTLYNode;                          // deep clone of current value
   validateSchema(): MOTLYSchemaError[];           // validate value against schema
   validateReferences(): MOTLYValidationError[];   // check all $-references resolve
   dispose(): void;                                // free resources / mark dead

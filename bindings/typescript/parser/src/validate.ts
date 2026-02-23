@@ -1,6 +1,6 @@
 import {
-  MOTLYValue,
   MOTLYNode,
+  MOTLYPropertyValue,
   MOTLYRef,
   MOTLYSchemaError,
   MOTLYValidationError,
@@ -8,40 +8,40 @@ import {
   isEnvRef,
 } from "../../interface/src/types";
 
-function getEqString(node: MOTLYValue): string | undefined {
+function getEqString(node: MOTLYNode): string | undefined {
   return typeof node.eq === "string" ? node.eq : undefined;
 }
 
-function valueEqString(node: MOTLYNode): string | undefined {
-  if (isRef(node.eq) || isEnvRef(node.eq)) return undefined;
-  return getEqString(node);
+function pvEqString(pv: MOTLYPropertyValue): string | undefined {
+  if (isRef(pv)) return undefined;
+  return getEqString(pv);
 }
 
 function extractSection(
-  node: MOTLYValue,
+  node: MOTLYNode,
   name: string
-): Record<string, MOTLYNode> | undefined {
+): Record<string, MOTLYPropertyValue> | undefined {
   if (!node.properties) return undefined;
-  const section = node.properties[name];
-  if (section === undefined || isRef(section.eq) || isEnvRef(section.eq)) return undefined;
-  return section.properties;
+  const pv = node.properties[name];
+  if (pv === undefined || isRef(pv)) return undefined;
+  return pv.properties;
 }
 
 // ── Reference Validation ────────────────────────────────────────
 
-export function validateReferences(root: MOTLYValue): MOTLYValidationError[] {
+export function validateReferences(root: MOTLYNode): MOTLYValidationError[] {
   const errors: MOTLYValidationError[] = [];
   const path: string[] = [];
-  const ancestors: MOTLYValue[] = [root];
+  const ancestors: MOTLYNode[] = [root];
   walkRefs(root, path, ancestors, root, errors);
   return errors;
 }
 
 function walkRefs(
-  node: MOTLYValue,
+  node: MOTLYNode,
   path: string[],
-  ancestors: MOTLYValue[],
-  root: MOTLYValue,
+  ancestors: MOTLYNode[],
+  root: MOTLYNode,
   errors: MOTLYValidationError[]
 ): void {
   // Check array elements in eq
@@ -51,13 +51,12 @@ function walkRefs(
 
   if (node.properties) {
     for (const key of Object.keys(node.properties)) {
-      const child = node.properties[key];
+      const childPv = node.properties[key];
       path.push(key);
 
-      // Check if child's eq is a reference (checked at property level
-      // to maintain correct ancestor depth for reference resolution)
-      if (isRef(child.eq)) {
-        const errMsg = checkLink(child.eq, ancestors, root);
+      if (isRef(childPv)) {
+        // This property is a reference — check it
+        const errMsg = checkLink(childPv.linkTo, ancestors, root);
         if (errMsg !== null) {
           errors.push({
             message: errMsg,
@@ -65,12 +64,12 @@ function walkRefs(
             code: "unresolved-reference",
           });
         }
+      } else {
+        // Recurse into child node
+        ancestors.push(node);
+        walkRefs(childPv, path, ancestors, root, errors);
+        ancestors.pop();
       }
-
-      // Recurse into child
-      ancestors.push(node);
-      walkRefs(child, path, ancestors, root, errors);
-      ancestors.pop();
 
       path.pop();
     }
@@ -78,21 +77,20 @@ function walkRefs(
 }
 
 function walkArrayRefs(
-  arr: MOTLYNode[],
+  arr: MOTLYPropertyValue[],
   path: string[],
-  ancestors: MOTLYValue[],
-  parentNode: MOTLYValue,
-  root: MOTLYValue,
+  ancestors: MOTLYNode[],
+  parentNode: MOTLYNode,
+  root: MOTLYNode,
   errors: MOTLYValidationError[]
 ): void {
   for (let i = 0; i < arr.length; i++) {
-    const elem = arr[i];
+    const elemPv = arr[i];
     const idxKey = `[${i}]`;
     path.push(idxKey);
 
-    // Check if element's eq is a reference
-    if (isRef(elem.eq)) {
-      const errMsg = checkLink(elem.eq, ancestors, root);
+    if (isRef(elemPv)) {
+      const errMsg = checkLink(elemPv.linkTo, ancestors, root);
       if (errMsg !== null) {
         errors.push({
           message: errMsg,
@@ -100,37 +98,37 @@ function walkArrayRefs(
           code: "unresolved-reference",
         });
       }
+    } else {
+      // Recurse into element node
+      ancestors.push(parentNode);
+      walkRefs(elemPv, path, ancestors, root, errors);
+      ancestors.pop();
     }
-
-    // Recurse into element
-    ancestors.push(parentNode);
-    walkRefs(elem, path, ancestors, root, errors);
-    ancestors.pop();
 
     path.pop();
   }
 }
 
 function checkLink(
-  link: MOTLYRef,
-  ancestors: MOTLYValue[],
-  root: MOTLYValue
+  linkTo: string,
+  ancestors: MOTLYNode[],
+  root: MOTLYNode
 ): string | null {
-  const { ups, segments, error } = parseLinkString(link.linkTo);
+  const { ups, segments, error } = parseLinkString(linkTo);
   if (error !== null) return error;
 
-  let start: MOTLYValue;
+  let start: MOTLYNode;
   if (ups === 0) {
     start = root;
   } else {
     const idx = ancestors.length - ups;
     if (idx < 0 || idx >= ancestors.length) {
-      return `Reference "${link.linkTo}" goes ${ups} level(s) up but only ${ancestors.length} ancestor(s) available`;
+      return `Reference "${linkTo}" goes ${ups} level(s) up but only ${ancestors.length} ancestor(s) available`;
     }
     start = ancestors[idx];
   }
 
-  return resolvePath(start, segments, link.linkTo);
+  return resolvePath(start, segments, linkTo);
 }
 
 type RefSeg = { kind: "name"; name: string } | { kind: "index"; index: number };
@@ -186,22 +184,30 @@ function parseLinkString(s: string): { ups: number; segments: RefSeg[]; error: s
 }
 
 function resolvePath(
-  start: MOTLYValue,
+  start: MOTLYNode,
   segments: RefSeg[],
   linkStr: string
 ): string | null {
-  let current: MOTLYValue = start;
+  let current: MOTLYNode | "terminal" = start;
 
   for (const seg of segments) {
+    if (current === "terminal") {
+      return `Reference "${linkStr}" could not be resolved: cannot follow path through a link`;
+    }
+
     if (seg.kind === "name") {
       if (!current.properties) {
         return `Reference "${linkStr}" could not be resolved: property "${seg.name}" not found (node has no properties)`;
       }
-      const child: MOTLYNode | undefined = current.properties[seg.name];
-      if (child === undefined) {
+      const childPv: MOTLYPropertyValue | undefined = current.properties[seg.name];
+      if (childPv === undefined) {
         return `Reference "${linkStr}" could not be resolved: property "${seg.name}" not found`;
       }
-      current = child;
+      if (isRef(childPv)) {
+        current = "terminal";
+      } else {
+        current = childPv;
+      }
     } else {
       if (current.eq === undefined || !Array.isArray(current.eq)) {
         return `Reference "${linkStr}" could not be resolved: index [${seg.index}] used on non-array`;
@@ -209,7 +215,12 @@ function resolvePath(
       if (seg.index >= current.eq.length) {
         return `Reference "${linkStr}" could not be resolved: index [${seg.index}] out of bounds (array length ${current.eq.length})`;
       }
-      current = current.eq[seg.index];
+      const elemPv: MOTLYPropertyValue = current.eq[seg.index];
+      if (isRef(elemPv)) {
+        current = "terminal";
+      } else {
+        current = elemPv;
+      }
     }
   }
 
@@ -219,8 +230,8 @@ function resolvePath(
 // ── Schema Validation ───────────────────────────────────────────
 
 export function validateSchema(
-  tag: MOTLYValue,
-  schema: MOTLYValue
+  tag: MOTLYNode,
+  schema: MOTLYNode
 ): MOTLYSchemaError[] {
   const errors: MOTLYSchemaError[] = [];
   const types = extractSection(schema, "Types");
@@ -233,12 +244,11 @@ type AdditionalPolicy =
   | { kind: "allow" }
   | { kind: "validateAs"; typeName: string };
 
-function getAdditionalPolicy(schema: MOTLYValue): AdditionalPolicy {
+function getAdditionalPolicy(schema: MOTLYNode): AdditionalPolicy {
   if (!schema.properties) return { kind: "reject" };
-  const additional = schema.properties["Additional"];
-  if (additional === undefined) return { kind: "reject" };
-  if (isRef(additional.eq)) return { kind: "reject" };
-  const eqStr = getEqString(additional);
+  const additionalPv = schema.properties["Additional"];
+  if (additionalPv === undefined || isRef(additionalPv)) return { kind: "reject" };
+  const eqStr = getEqString(additionalPv);
   if (eqStr !== undefined) {
     if (eqStr === "allow") return { kind: "allow" };
     if (eqStr === "reject") return { kind: "reject" };
@@ -248,9 +258,9 @@ function getAdditionalPolicy(schema: MOTLYValue): AdditionalPolicy {
 }
 
 function validateNodeAgainstSchema(
-  tag: MOTLYValue,
-  schema: MOTLYValue,
-  types: Record<string, MOTLYNode> | undefined,
+  tag: MOTLYNode,
+  schema: MOTLYNode,
+  types: Record<string, MOTLYPropertyValue> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
@@ -264,15 +274,15 @@ function validateNodeAgainstSchema(
   if (required) {
     for (const key of Object.keys(required)) {
       const propPath = [...path, key];
-      const tagValue = tagProps ? tagProps[key] : undefined;
-      if (tagValue === undefined) {
+      const tagValuePv = tagProps ? tagProps[key] : undefined;
+      if (tagValuePv === undefined) {
         errors.push({
           message: `Missing required property "${key}"`,
           path: propPath,
           code: "missing-required",
         });
       } else {
-        validateValueType(tagValue, required[key], types, propPath, errors);
+        validateValueType(tagValuePv, required[key], types, propPath, errors);
       }
     }
   }
@@ -280,10 +290,10 @@ function validateNodeAgainstSchema(
   // Check optional properties that exist
   if (optional && tagProps) {
     for (const key of Object.keys(optional)) {
-      const tagValue = tagProps[key];
-      if (tagValue !== undefined) {
+      const tagValuePv = tagProps[key];
+      if (tagValuePv !== undefined) {
         validateValueType(
-          tagValue,
+          tagValuePv,
           optional[key],
           types,
           [...path, key],
@@ -313,7 +323,7 @@ function validateNodeAgainstSchema(
         case "allow":
           break;
         case "validateAs": {
-          const synthetic = makeTypeSpecNode(additional.typeName);
+          const synthetic: MOTLYPropertyValue = makeTypeSpecNode(additional.typeName);
           validateValueType(tagProps[key], synthetic, types, propPath, errors);
           break;
         }
@@ -322,68 +332,130 @@ function validateNodeAgainstSchema(
   }
 }
 
-function makeTypeSpecNode(typeName: string): MOTLYValue {
+function makeTypeSpecNode(typeName: string): MOTLYNode {
   return { eq: typeName };
 }
 
 function validateValueType(
-  value: MOTLYNode,
-  typeSpec: MOTLYNode,
-  types: Record<string, MOTLYNode> | undefined,
+  valuePv: MOTLYPropertyValue,
+  typeSpecPv: MOTLYPropertyValue,
+  types: Record<string, MOTLYPropertyValue> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(typeSpec.eq)) return;
+  // Skip ref type specs in schema
+  if (isRef(typeSpecPv)) return;
+  const specNode = typeSpecPv;
 
+  // If value is a ref, generate appropriate "found a link" error
+  if (isRef(valuePv)) {
+    pushRefTypeError(specNode, path, errors);
+    return;
+  }
+
+  // Value is a node
+  const value = valuePv;
+
+  validateNodeAgainstTypeSpec(value, specNode, types, path, errors);
+}
+
+function pushRefTypeError(
+  specNode: MOTLYNode,
+  path: string[],
+  errors: MOTLYSchemaError[]
+): void {
+  // Check for enum
+  if (specNode.properties) {
+    const eqProp = specNode.properties["eq"];
+    if (eqProp !== undefined && !isRef(eqProp)) {
+      if (Array.isArray(eqProp.eq)) {
+        errors.push({
+          message: "Expected an enum value but found a link",
+          path: [...path],
+          code: "wrong-type",
+        });
+        return;
+      }
+    }
+    if (specNode.properties["matches"] !== undefined) {
+      errors.push({
+        message: "Expected a value matching a pattern but found a link",
+        path: [...path],
+        code: "wrong-type",
+      });
+      return;
+    }
+  }
+
+  const typeName = getEqString(specNode);
+  if (typeName !== undefined) {
+    errors.push({
+      message: `Expected type "${typeName}" but found a link`,
+      path: [...path],
+      code: "wrong-type",
+    });
+  } else if (
+    specNode.properties &&
+    ("Required" in specNode.properties ||
+      "Optional" in specNode.properties ||
+      "Additional" in specNode.properties)
+  ) {
+    errors.push({
+      message: "Expected a tag but found a link",
+      path: [...path],
+      code: "wrong-type",
+    });
+  }
+}
+
+function validateNodeAgainstTypeSpec(
+  value: MOTLYNode,
+  specNode: MOTLYNode,
+  types: Record<string, MOTLYPropertyValue> | undefined,
+  path: string[],
+  errors: MOTLYSchemaError[]
+): void {
   // Check for union type (oneOf)
-  if (typeSpec.properties) {
-    const oneOf = typeSpec.properties["oneOf"];
-    if (oneOf !== undefined && !isRef(oneOf.eq)) {
-      validateUnion(value, oneOf, types, path, errors);
+  if (specNode.properties) {
+    const oneOfPv = specNode.properties["oneOf"];
+    if (oneOfPv !== undefined && !isRef(oneOfPv)) {
+      validateUnion(value, oneOfPv, types, path, errors);
       return;
     }
   }
 
   // Check for enum (eq) or pattern (matches)
-  if (typeSpec.properties) {
-    const eqProp = typeSpec.properties["eq"];
-    if (eqProp !== undefined && !isRef(eqProp.eq)) {
+  if (specNode.properties) {
+    const eqProp = specNode.properties["eq"];
+    if (eqProp !== undefined && !isRef(eqProp)) {
       if (Array.isArray(eqProp.eq)) {
         validateEnum(value, eqProp.eq, path, errors);
         return;
       }
     }
 
-    const matchesProp = typeSpec.properties["matches"];
-    if (matchesProp !== undefined && !isRef(matchesProp.eq)) {
-      const baseType = getEqString(typeSpec);
+    const matchesProp = specNode.properties["matches"];
+    if (matchesProp !== undefined && !isRef(matchesProp)) {
+      const baseType = getEqString(specNode);
       if (baseType !== undefined) {
         validateBaseType(value, baseType, types, path, errors);
       }
-      validatePattern(value, matchesProp, path, errors);
+      validatePattern(value, matchesProp as MOTLYNode, path, errors);
       return;
     }
   }
 
   // Get the type name from the spec's eq value
-  const typeName = getEqString(typeSpec);
+  const typeName = getEqString(specNode);
   if (typeName === undefined) {
     // Nested schema (has Required/Optional/Additional)
     if (
-      typeSpec.properties &&
-      ("Required" in typeSpec.properties ||
-        "Optional" in typeSpec.properties ||
-        "Additional" in typeSpec.properties)
+      specNode.properties &&
+      ("Required" in specNode.properties ||
+        "Optional" in specNode.properties ||
+        "Additional" in specNode.properties)
     ) {
-      if (isRef(value.eq)) {
-        errors.push({
-          message: "Expected a tag but found a link",
-          path: [...path],
-          code: "wrong-type",
-        });
-      } else {
-        validateNodeAgainstSchema(value, typeSpec, types, path, errors);
-      }
+      validateNodeAgainstSchema(value, specNode, types, path, errors);
     }
     return;
   }
@@ -394,7 +466,7 @@ function validateValueType(
 function validateBaseType(
   value: MOTLYNode,
   typeName: string,
-  types: Record<string, MOTLYNode> | undefined,
+  types: Record<string, MOTLYPropertyValue> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
@@ -419,19 +491,21 @@ function validateBaseType(
       validateTypeDate(value, path, errors);
       break;
     case "tag":
-      validateTypeTag(value, path, errors);
-      break;
+      break; // tag — node exists, always valid for a non-ref
     case "flag":
-      validateTypeFlag(value, path, errors);
-      break;
+      break; // flag — presence-only, always valid for a non-ref
     case "any":
-      break;
+      break; // any — always valid
     default: {
       // Custom type
       if (types) {
-        const typeDef = types[typeName];
-        if (typeDef !== undefined) {
-          validateValueType(value, typeDef, types, path, errors);
+        const typeDefPv = types[typeName];
+        if (typeDefPv !== undefined) {
+          if (isRef(typeDefPv)) {
+            // Type definition is a ref — skip
+          } else {
+            validateNodeAgainstTypeSpec(value, typeDefPv, types, path, errors);
+          }
         } else {
           errors.push({
             message: `Unknown type "${typeName}" in schema`,
@@ -455,14 +529,6 @@ function validateTypeString(
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "string" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
   if (typeof value.eq !== "string") {
     errors.push({
       message: 'Expected type "string"',
@@ -477,14 +543,6 @@ function validateTypeNumber(
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "number" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
   if (typeof value.eq !== "number") {
     errors.push({
       message: 'Expected type "number"',
@@ -499,14 +557,6 @@ function validateTypeBoolean(
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "boolean" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
   if (typeof value.eq !== "boolean") {
     errors.push({
       message: 'Expected type "boolean"',
@@ -521,14 +571,6 @@ function validateTypeDate(
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "date" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
   if (!(value.eq instanceof Date)) {
     errors.push({
       message: 'Expected type "date"',
@@ -538,50 +580,13 @@ function validateTypeDate(
   }
 }
 
-function validateTypeTag(
-  value: MOTLYNode,
-  path: string[],
-  errors: MOTLYSchemaError[]
-): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "tag" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-  }
-}
-
-function validateTypeFlag(
-  value: MOTLYNode,
-  path: string[],
-  errors: MOTLYSchemaError[]
-): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: 'Expected type "flag" but found a link',
-      path: [...path],
-      code: "wrong-type",
-    });
-  }
-}
-
 function validateArrayType(
   value: MOTLYNode,
   innerType: string,
-  types: Record<string, MOTLYNode> | undefined,
+  types: Record<string, MOTLYPropertyValue> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: `Expected type "${innerType}[]" but found a link`,
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
-
   if (!Array.isArray(value.eq)) {
     errors.push({
       message: `Expected type "${innerType}[]" but value is not an array`,
@@ -593,25 +598,25 @@ function validateArrayType(
 
   for (let i = 0; i < value.eq.length; i++) {
     const elemPath = [...path, `[${i}]`];
-    validateBaseType(value.eq[i], innerType, types, elemPath, errors);
+    const elemPv = value.eq[i];
+    if (isRef(elemPv)) {
+      errors.push({
+        message: `Expected type "${innerType}" but found a link`,
+        path: elemPath,
+        code: "wrong-type",
+      });
+    } else {
+      validateBaseType(elemPv, innerType, types, elemPath, errors);
+    }
   }
 }
 
 function validateEnum(
   value: MOTLYNode,
-  allowed: MOTLYNode[],
+  allowed: MOTLYPropertyValue[],
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
-  if (isRef(value.eq)) {
-    errors.push({
-      message: "Expected an enum value but found a link",
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
-
   const nodeEq = value.eq;
   if (
     nodeEq === undefined ||
@@ -629,7 +634,7 @@ function validateEnum(
   }
 
   const matches = allowed.some((a) => {
-    if (isRef(a.eq)) return false;
+    if (isRef(a)) return false;
     const aeq = a.eq;
     if (aeq instanceof Date && nodeEq instanceof Date) {
       return aeq.getTime() === nodeEq.getTime();
@@ -639,9 +644,9 @@ function validateEnum(
 
   if (!matches) {
     const allowedStrs = allowed
-      .filter((a) => !isRef(a.eq))
+      .filter((a) => !isRef(a))
       .map((a) => {
-        const aeq = a.eq;
+        const aeq = (a as MOTLYNode).eq;
         return JSON.stringify(String(aeq));
       });
     errors.push({
@@ -654,21 +659,12 @@ function validateEnum(
 
 function validatePattern(
   value: MOTLYNode,
-  matchesNode: MOTLYValue,
+  matchesNode: MOTLYNode,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
   const pattern = getEqString(matchesNode);
   if (pattern === undefined) return;
-
-  if (isRef(value.eq)) {
-    errors.push({
-      message: "Expected a value matching a pattern but found a link",
-      path: [...path],
-      code: "wrong-type",
-    });
-    return;
-  }
 
   if (typeof value.eq !== "string") {
     errors.push({
@@ -699,24 +695,27 @@ function validatePattern(
 
 function validateUnion(
   value: MOTLYNode,
-  oneOfNode: MOTLYValue,
-  types: Record<string, MOTLYNode> | undefined,
+  oneOfNode: MOTLYNode,
+  types: Record<string, MOTLYPropertyValue> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
   if (!Array.isArray(oneOfNode.eq)) return;
 
-  for (const typeVal of oneOfNode.eq) {
-    const typeName = valueEqString(typeVal);
+  // We need to wrap value as a MOTLYPropertyValue for validate_value_type
+  const valuePv: MOTLYPropertyValue = value;
+
+  for (const typePv of oneOfNode.eq) {
+    const typeName = pvEqString(typePv);
     if (typeName === undefined) continue;
     const trialErrors: MOTLYSchemaError[] = [];
-    const synthetic = makeTypeSpecNode(typeName);
-    validateValueType(value, synthetic, types, path, trialErrors);
+    const synthetic: MOTLYPropertyValue = makeTypeSpecNode(typeName);
+    validateValueType(valuePv, synthetic, types, path, trialErrors);
     if (trialErrors.length === 0) return;
   }
 
   const typeStrs = oneOfNode.eq
-    .map((v) => valueEqString(v))
+    .map((v) => pvEqString(v))
     .filter((s) => s !== undefined);
   errors.push({
     message: `Value does not match any type in oneOf: [${typeStrs.join(", ")}]`,

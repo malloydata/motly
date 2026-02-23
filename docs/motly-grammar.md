@@ -5,6 +5,7 @@ Changes from the previous grammar:
 - **Added** `assignBoth` production for the `:=` operator.
 - **Added** `none` literal (`@none`) to the `value` production.
 - **Added** `heredocString` (`<<<...>>>`) to the `string` production — a raw multi-line string with automatic dedentation based on the first non-empty line's indentation.
+- **Added** `envRef` production (`@env.NAME`) to the `value` and `scalarValue` productions — reads a value from the environment at resolution time.
 - **Removed** `propName "=" [ "..." ] properties` from `replaceProps` (was a synonym for `:`; confusing under new semantics where `=` only touches the value slot).
 - **Removed** `"{" "..." "}"` from `properties` (the `{ ... }` preserve-properties form is superseded by the orthogonality of `=` and `:`).
 - **Renamed** statement productions for clarity: `assignValue`, `assignBoth`, `replaceProps`, `mergeProps`.
@@ -46,10 +47,11 @@ clearAll        ::= "-..."
 propName        ::= identifier { "." identifier }
 
 (* Values *)
-value           ::= array | boolean | none | date | number | string | reference
+value           ::= array | boolean | none | envRef | date | number | string | reference
 
 boolean         ::= "@true" | "@false"
 none            ::= "@none"
+envRef          ::= "@env." identifier
 date            ::= "@" isoDate
 number          ::= [ "-" ] digits [ "." digits ] [ exponent ]
                   | [ "-" ] "." digits [ exponent ]
@@ -81,7 +83,7 @@ arrayElement    ::= scalarValue [ properties ]
                   | properties
                   | array
 
-scalarValue     ::= boolean | none | date | number | string
+scalarValue     ::= boolean | none | envRef | date | number | string
 
 (* Properties block *)
 properties      ::= "{" statementList "}"

@@ -8,7 +8,7 @@ pub mod tree;
 pub mod validate;
 
 use error::MOTLYError;
-use tree::MOTLYValue;
+use tree::MOTLYNode;
 
 pub use validate::{validate_references, validate_schema, SchemaError, ValidationError};
 
@@ -16,13 +16,13 @@ pub use validate::{validate_references, validate_schema, SchemaError, Validation
 
 /// The result of parsing MOTLY source.
 pub struct MOTLYResult {
-    pub value: MOTLYValue,
+    pub value: MOTLYNode,
     pub errors: Vec<MOTLYError>,
 }
 
 /// Parse MOTLY source and execute statements against the given value,
 /// returning the updated value and any errors (parse errors + non-fatal execution errors).
-pub fn parse_motly(input: &str, mut value: MOTLYValue) -> MOTLYResult {
+pub fn parse_motly(input: &str, mut value: MOTLYNode) -> MOTLYResult {
     match parser::parse(input) {
         Ok(stmts) => {
             let exec_errors = interpreter::execute(&stmts, &mut value);
@@ -63,8 +63,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 struct Session {
-    value: MOTLYValue,
-    schema: Option<MOTLYValue>,
+    value: MOTLYNode,
+    schema: Option<MOTLYNode>,
 }
 
 // WASM is single-threaded, so thread_local is just a convenient safe wrapper.
@@ -85,7 +85,7 @@ fn next_id() -> u32 {
     })
 }
 
-/// Create a new session holding an empty MOTLYValue. Returns a session ID.
+/// Create a new session holding an empty MOTLYNode. Returns a session ID.
 #[no_mangle]
 pub extern "C" fn wasm_session_new() -> u32 {
     let id = next_id();
@@ -93,7 +93,7 @@ pub extern "C" fn wasm_session_new() -> u32 {
         s.insert(
             id,
             Session {
-                value: MOTLYValue::new(),
+                value: MOTLYNode::new(),
                 schema: None,
             },
         )
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn wasm_session_parse(
         std::str::from_utf8_unchecked(slice)
     };
     let value = with_sessions(|s| match s.get_mut(&id) {
-        Some(session) => Some(std::mem::replace(&mut session.value, MOTLYValue::new())),
+        Some(session) => Some(std::mem::replace(&mut session.value, MOTLYNode::new())),
         None => None,
     });
     let value = match value {
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let result = parse_motly(input, MOTLYValue::new());
+    let result = parse_motly(input, MOTLYNode::new());
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.schema = Some(result.value);
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
 pub extern "C" fn wasm_session_reset(id: u32) {
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
-            session.value = MOTLYValue::new();
+            session.value = MOTLYNode::new();
         }
     });
 }

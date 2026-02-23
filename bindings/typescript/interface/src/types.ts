@@ -11,25 +11,30 @@ export interface MOTLYEnvRef {
   env: string;
 }
 
+/** What goes to the right of = (the eq slot). */
+export type MOTLYValue = MOTLYScalar | MOTLYEnvRef | MOTLYPropertyValue[];
+
 /**
- * A value node in the MOTLY tree.
+ * A node in the MOTLY tree.
  *
- * - `eq` — the node's assigned value: a scalar, a reference ({@link MOTLYRef}),
- *   or an array of child nodes
- * - `properties` — named child nodes (the node's "tags")
+ * - `eq` — the node's assigned value: a scalar, an env ref ({@link MOTLYEnvRef}),
+ *   or an array of property values
+ * - `properties` — named child property values
  * - `deleted` — true if this node was explicitly deleted with `-name`
  */
-export interface MOTLYValue {
-  eq?: MOTLYScalar | MOTLYRef | MOTLYEnvRef | MOTLYNode[];
-  properties?: Record<string, MOTLYNode>;
+export interface MOTLYNode {
+  eq?: MOTLYValue;
+  properties?: Record<string, MOTLYPropertyValue>;
   deleted?: boolean;
 }
 
 /**
- * A node in the MOTLY tree. Every node is a {@link MOTLYValue}.
- * References are represented as `eq: { linkTo: "..." }` inside a value node.
+ * What a property or array element leads to: either a node or a link reference.
+ *
+ * A `MOTLYRef` means "this IS that other node" — no own value, no own properties.
+ * A `MOTLYNode` is a full node with optional eq, properties, and deleted flag.
  */
-export type MOTLYNode = MOTLYValue;
+export type MOTLYPropertyValue = MOTLYNode | MOTLYRef;
 
 /** A parse error with source location span. */
 export interface MOTLYError {
@@ -53,13 +58,13 @@ export interface MOTLYSchemaError {
   path: string[];
 }
 
-/** Type guard: is this eq value a link reference? */
-export function isRef(eq: MOTLYValue["eq"]): eq is MOTLYRef {
-  return typeof eq === "object" && eq !== null && "linkTo" in eq && !Array.isArray(eq) && !(eq instanceof Date);
+/** Type guard: is this property value a link reference? */
+export function isRef(pv: MOTLYPropertyValue | undefined): pv is MOTLYRef {
+  return typeof pv === "object" && pv !== null && "linkTo" in pv && !Array.isArray(pv) && !(pv instanceof Date);
 }
 
 /** Type guard: is this eq value an env reference? */
-export function isEnvRef(eq: MOTLYValue["eq"]): eq is MOTLYEnvRef {
+export function isEnvRef(eq: MOTLYNode["eq"]): eq is MOTLYEnvRef {
   return typeof eq === "object" && eq !== null && "env" in eq && !Array.isArray(eq) && !(eq instanceof Date);
 }
 
