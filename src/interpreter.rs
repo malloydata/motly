@@ -84,9 +84,7 @@ fn execute_assign_both(
     }) = value
     {
         // CLONE semantics: resolve + deep copy the target
-        // Clone the root snapshot before mutation so we can resolve against it
-        let snapshot = node.clone();
-        let cloned = resolve_and_clone(&snapshot, path, *ups, ref_path);
+        let cloned = resolve_and_clone(node, path, *ups, ref_path);
         match cloned {
             Ok(mut cloned) => {
                 // Check for relative references that escape the clone boundary
