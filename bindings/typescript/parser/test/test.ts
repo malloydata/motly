@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   MOTLYSession,
-} from "../build/index";
+} from "../build/parser/src/index";
 
 // ── Fixture loading ─────────────────────────────────────────────
 

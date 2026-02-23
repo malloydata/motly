@@ -1,4 +1,4 @@
-import { MOTLYValue, MOTLYNode, isRef, isEnvRef } from "motly-ts-interface";
+import { MOTLYValue, MOTLYNode, isRef, isEnvRef } from "../../interface/src/types";
 
 /** Deep clone a MOTLYValue. */
 export function cloneValue(value: MOTLYValue): MOTLYValue {

@@ -5,7 +5,7 @@ import {
   ArrayElement,
   RefPathSegment,
 } from "./ast";
-import { MOTLYError } from "motly-ts-interface";
+import { MOTLYError } from "../../interface/src/types";
 
 interface Position {
   line: number;

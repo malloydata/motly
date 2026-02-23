@@ -6,7 +6,7 @@ import {
   MOTLYValidationError,
   isRef,
   isEnvRef,
-} from "motly-ts-interface";
+} from "../../interface/src/types";
 
 function getEqString(node: MOTLYValue): string | undefined {
   return typeof node.eq === "string" ? node.eq : undefined;

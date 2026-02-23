@@ -1,10 +1,10 @@
 {
   "name": "@malloydata/motly-ts-parser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MOTLY text to wire format parser — pure TypeScript",
   "license": "MIT",
-  "main": "build/index.js",
-  "types": "build/index.d.ts",
+  "main": "build/parser/src/index.js",
+  "types": "build/parser/src/index.d.ts",
   "files": [
     "build/"
   ],
@@ -25,7 +25,6 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.2",
-    "motly-ts-interface": "file:../interface",
     "typescript": "^5.0.0"
   }
 }

@@ -3,7 +3,7 @@ import {
   MOTLYError,
   MOTLYSchemaError,
   MOTLYValidationError,
-} from "motly-ts-interface";
+} from "../../interface/src/types";
 import { parse } from "./parser";
 import { execute } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";

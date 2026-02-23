@@ -7,8 +7,8 @@ export type {
   MOTLYError,
   MOTLYSchemaError,
   MOTLYValidationError,
-} from "motly-ts-interface";
+} from "../../interface/src/types";
 
-export { isRef, isEnvRef } from "motly-ts-interface";
+export { isRef, isEnvRef } from "../../interface/src/types";
 
 export { MOTLYSession } from "./session";

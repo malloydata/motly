@@ -6,13 +6,13 @@
     "declaration": true,
     "strict": true,
     "outDir": "build",
-    "rootDir": "src",
+    "rootDir": "..",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "node"
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../interface/src/**/*"],
   "exclude": ["node_modules", "build"]
 }

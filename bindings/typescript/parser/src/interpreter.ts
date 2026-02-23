@@ -4,7 +4,7 @@ import {
   ArrayElement,
   RefPathSegment,
 } from "./ast";
-import { MOTLYValue, MOTLYNode, MOTLYError, isRef } from "motly-ts-interface";
+import { MOTLYValue, MOTLYNode, MOTLYError, isRef } from "../../interface/src/types";
 import { cloneValue } from "./clone";
 
 /** Execute a list of parsed statements against an existing MOTLYValue. */
