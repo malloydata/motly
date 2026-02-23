@@ -139,3 +139,17 @@ The parser and interpreter exist in both Rust and pure TypeScript. Both implemen
 - `src/validate.rs` ↔ `bindings/typescript/parser/src/validate.ts`
 
 Shared test fixtures in `test-data/fixtures/` are the single source of truth for correctness. Any feature or fix applied to one implementation must be applied to the other.
+
+### Future: Differential Fuzzing
+
+The hand-written test fixtures verify known behaviors but can't guarantee completeness. As the two implementations evolve independently, the risk of subtle drift grows — edge cases where one parser accepts input the other rejects, or where they produce structurally different ASTs.
+
+**Differential fuzzing** addresses this directly: generate random MOTLY inputs, feed them to both parsers, and compare outputs. No expected values needed — the two implementations just have to agree.
+
+The plan:
+
+1. **Grammar-aware fuzzer** — walks the EBNF and makes random choices at each production (with depth/size limits to keep inputs reasonable). This hits the weird corners humans forget: nested triple-quoted strings inside arrays, heredocs with unusual indentation, numbers that almost look like bare strings, references with deep `^` chains, etc.
+
+2. **Differential test harness** — runs both parsers on each generated input and does a structural comparison. For each input, either both parsers succeed and produce equivalent ASTs, or both parsers fail. Any disagreement is a bug.
+
+3. **CI integration** — run as a periodic sweep (e.g., 10,000 random inputs per run). The longer it runs, the more confidence accumulates. Failures get distilled into minimal reproducing cases and added to the shared fixture files as regression tests.
