@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: This script pushes to GitHub and creates a release. It requires
+# credentials that are only available in CI, not on the local CLI.
+# Do NOT run this from the local machine. Instead, bump the version
+# manually and build the tarball with `npm run pack`.
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE_JSON="$REPO_ROOT/bindings/typescript/parser/package.json"
 CARGO_TOML="$REPO_ROOT/Cargo.toml"
