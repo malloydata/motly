@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # NOTE: This script pushes to GitHub and creates a release. It requires
-# credentials that are only available in CI, not on the local CLI.
-# Do NOT run this from the local machine. Instead, bump the version
-# manually and build the tarball with `npm run pack`.
+# git push credentials that may not be available on the local CLI.
+# npm publishing is done via GitHub Actions, not locally:
+#   gh workflow run "Publish to npm" --repo malloydata/motly
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE_JSON="$REPO_ROOT/bindings/typescript/parser/package.json"

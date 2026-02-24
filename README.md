@@ -55,7 +55,7 @@ MOTLY is under active development. [Malloy](https://malloydata.dev) uses the MOT
 - Full parser and interpreter (Rust and pure TypeScript, kept in sync)
 - Reference system (`$root.path`, `$^sibling`, `$^^grandparent`, indexed access)
 - Clone/override patterns with `:=` for configuration modes and inheritance
-- [`@malloydata/motly-ts-parser`](bindings/typescript/parser/) -- the TypeScript parser, published on npm with zero native dependencies
+- [`@malloydata/motly-ts-parser`](https://www.npmjs.com/package/@malloydata/motly-ts-parser) -- the TypeScript parser, published on npm with zero native dependencies
 
 **Future plans:**
 - **Schema validation** -- validating MOTLY files against MOTLY-defined schemas
@@ -72,6 +72,6 @@ See [VISION.md](VISION.md) for more.
 ## Packages
 
 - **Rust**: `cargo doc --open` -- Rust library and CLI ( not published yet )
-- **TypeScript**: [`@malloydata/motly-ts-parser`](bindings/typescript/parser/) -- pure TypeScript parser (zero native deps)
+- **TypeScript**: [`@malloydata/motly-ts-parser`](https://www.npmjs.com/package/@malloydata/motly-ts-parser) -- pure TypeScript parser (zero native deps)
 
 The file extension is `.motly`.
