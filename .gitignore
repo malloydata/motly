@@ -5,3 +5,4 @@ bindings/typescript/parser/build/
 bindings/typescript/parser/build-test/
 bindings/typescript/parser/node_modules/
 bindings/typescript/parser/*.tgz
+.claude/
