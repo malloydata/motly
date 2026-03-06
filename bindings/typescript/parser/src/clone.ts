@@ -32,7 +32,7 @@ export function cloneNode(value: MOTLYNode): MOTLYNode {
 /** Deep clone a MOTLYPropertyValue (either a node or a ref). */
 export function clonePropertyValue(pv: MOTLYPropertyValue): MOTLYPropertyValue {
   if (isRef(pv)) {
-    return { linkTo: pv.linkTo };
+    return { linkTo: [...pv.linkTo], linkUps: pv.linkUps };
   }
   return cloneNode(pv);
 }

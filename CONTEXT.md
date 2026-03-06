@@ -42,7 +42,9 @@ bindings/typescript/
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
       validate.ts      — TypeScript port of src/validate.rs (~740 lines)
+      resolve.ts       — Tree resolver: follows refs, resolves env, produces plain JS values
     test/test.ts       — fixture-driven tests + hand-written tests
+    test/resolve.test.ts — Tests for resolve()
 
 docs/
   language.md      — Complete MOTLY language reference with EBNF grammar
@@ -96,8 +98,8 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
 
 **Output tree** (public API):
 - `MOTLYNode` — has optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYPropertyValue`), optional `deleted` flag
-- `MOTLYPropertyValue` — either a `MOTLYNode` or a link reference (`MOTLYPropertyValue::Ref(String)` in Rust, `{ linkTo }` in TS)
-- Link references (`$ref`) are a `MOTLYPropertyValue` variant — they replace the entire node (no own eq or properties)
+- `MOTLYPropertyValue` — either a `MOTLYNode` or a structured link reference (`MOTLYPropertyValue::Ref { link_to: Vec<RefSegment>, link_ups: usize }` in Rust, `{ linkTo: MOTLYRefSegment[], linkUps: number }` in TS)
+- Link references (`$ref`) are a `MOTLYPropertyValue` variant — they replace the entire node (no own eq or properties). `link_to` holds parsed path segments (names and indices), `link_ups` holds the number of `^` levels for relative refs (0 for absolute)
 - Environment refs (`@env.NAME`) live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS) — they are values, so a node can have an env ref AND properties
 
 The interpreter mutates the `MOTLYNode` tree in place (does not return a new value).
@@ -134,6 +136,8 @@ class MOTLYSession {
   getValue(): MOTLYNode;                          // deep clone of current value
   validateSchema(): MOTLYSchemaError[];           // validate value against schema
   validateReferences(): MOTLYValidationError[];   // check all $-references resolve
+  resolve(options?: { env?: Record<string, string | undefined> }): unknown;
+                                                  // resolve tree to plain JS (TS only)
   dispose(): void;                                // free resources / mark dead
 }
 ```
@@ -165,6 +169,8 @@ npm test              # fixture-driven + hand-written tests via node --test
 npm run pack          # produces @malloydata/motly-ts-parser tarball
 ```
 Zero native dependencies. Uses Node.js built-in test runner (`node:test`).
+
+Tests live in `test/*.ts` and are compiled by a separate `test/tsconfig.json` (CommonJS, `rootDir: "."`, `outDir: "../build-test"`). The test script builds both the library and tests, then runs `node --test build-test/*.js`. Test files import from the *built* library at `../build/parser/src/index` (relative to the test source). `MOTLYRef` has structured `linkTo` (array of path segments) and `linkUps` (number of `^` levels) — e.g. `$^parent.name` becomes `{ linkTo: ["parent", "name"], linkUps: 1 }`.
 
 ## Shared Test Fixtures
 

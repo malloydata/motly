@@ -20,6 +20,13 @@ pub enum EqValue {
     EnvRef(String),
 }
 
+/// A segment in a reference path: a property name or an array index.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RefSegment {
+    Name(String),
+    Index(usize),
+}
+
 /// What a property or array element leads to: either a node or a link reference.
 ///
 /// A `Ref` means "this IS that other node" — no own value, no own properties.
@@ -27,8 +34,11 @@ pub enum EqValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MOTLYPropertyValue {
     Node(MOTLYNode),
-    /// A reference to another node: `{ "linkTo": "$path" }`
-    Ref(String),
+    /// A structured reference to another node.
+    Ref {
+        link_to: Vec<RefSegment>,
+        link_ups: usize,
+    },
 }
 
 /// A node in the MOTLY output tree (has eq, properties, deleted).
@@ -93,14 +103,14 @@ impl MOTLYPropertyValue {
 
     /// Check if this property value is a link reference.
     pub fn is_ref(&self) -> bool {
-        matches!(self, MOTLYPropertyValue::Ref(_))
+        matches!(self, MOTLYPropertyValue::Ref { .. })
     }
 
     /// Get a reference to the inner node, if this is a Node variant.
     pub fn as_node(&self) -> Option<&MOTLYNode> {
         match self {
             MOTLYPropertyValue::Node(n) => Some(n),
-            MOTLYPropertyValue::Ref(_) => None,
+            MOTLYPropertyValue::Ref { .. } => None,
         }
     }
 
@@ -108,14 +118,14 @@ impl MOTLYPropertyValue {
     pub fn as_node_mut(&mut self) -> Option<&mut MOTLYNode> {
         match self {
             MOTLYPropertyValue::Node(n) => Some(n),
-            MOTLYPropertyValue::Ref(_) => None,
+            MOTLYPropertyValue::Ref { .. } => None,
         }
     }
 
     /// Convert a Ref to an empty Node (for intermediate path traversal).
     /// If already a Node, does nothing. Returns a mutable reference to the inner node.
     pub fn ensure_node(&mut self) -> &mut MOTLYNode {
-        if matches!(self, MOTLYPropertyValue::Ref(_)) {
+        if matches!(self, MOTLYPropertyValue::Ref { .. }) {
             *self = MOTLYPropertyValue::Node(MOTLYNode::new());
         }
         match self {
@@ -123,6 +133,32 @@ impl MOTLYPropertyValue {
             _ => unreachable!(),
         }
     }
+}
+
+/// Format a RefSegment slice for display: `$^^name[0].sub`
+pub fn format_ref_display(ups: usize, segments: &[RefSegment]) -> String {
+    let mut s = String::from("$");
+    for _ in 0..ups {
+        s.push('^');
+    }
+    let mut first = true;
+    for seg in segments {
+        match seg {
+            RefSegment::Name(name) => {
+                if !first {
+                    s.push('.');
+                }
+                s.push_str(name);
+                first = false;
+            }
+            RefSegment::Index(idx) => {
+                s.push('[');
+                s.push_str(&idx.to_string());
+                s.push(']');
+            }
+        }
+    }
+    s
 }
 
 impl Default for MOTLYNode {

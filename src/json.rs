@@ -82,14 +82,17 @@ impl JsonWriter {
     fn write_property_value(&mut self, pv: &MOTLYPropertyValue) {
         match pv {
             MOTLYPropertyValue::Node(n) => self.write_node(n),
-            MOTLYPropertyValue::Ref(link_to) => {
-                // Serialize as {"linkTo": "..."}
+            MOTLYPropertyValue::Ref { link_to, link_ups } => {
+                // Serialize as {"linkTo": [...], "linkUps": N}
                 self.buf.push('{');
                 self.depth += 1;
                 let mut first = true;
                 self.entry_sep(&mut first);
                 self.write_key("linkTo");
-                self.write_string_value(link_to);
+                self.write_ref_segments(link_to);
+                self.entry_sep(&mut first);
+                self.write_key("linkUps");
+                write!(&mut self.buf, "{}", link_ups).unwrap();
                 self.depth -= 1;
                 self.newline();
                 self.buf.push('}');
@@ -194,6 +197,22 @@ impl JsonWriter {
         self.write_string_value(key);
         self.buf.push(':');
         self.space();
+    }
+
+    fn write_ref_segments(&mut self, segments: &[RefSegment]) {
+        self.buf.push('[');
+        for (i, seg) in segments.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(',');
+            }
+            match seg {
+                RefSegment::Name(name) => self.write_string_value(name),
+                RefSegment::Index(idx) => {
+                    write!(&mut self.buf, "{}", idx).unwrap();
+                }
+            }
+        }
+        self.buf.push(']');
     }
 
     fn write_string_value(&mut self, s: &str) {

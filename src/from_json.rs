@@ -208,6 +208,14 @@ impl<'a> JsonParser<'a> {
             .map_err(|e| format!("Invalid number \"{}\": {}", num_str, e))
     }
 
+    fn parse_usize(&mut self) -> Result<usize, String> {
+        let n = self.parse_number()?;
+        if n < 0.0 || n.fract() != 0.0 {
+            return Err(format!("Expected non-negative integer, got {}", n));
+        }
+        Ok(n as usize)
+    }
+
     fn consume_digits(&mut self) {
         while self.pos < self.input.len() && self.input[self.pos].is_ascii_digit() {
             self.pos += 1;
@@ -280,7 +288,7 @@ impl<'a> JsonParser<'a> {
     /// Peeks at the JSON object to determine which variant.
     fn parse_property_value(&mut self) -> Result<MOTLYPropertyValue, String> {
         self.skip_ws();
-        // Must be an object — peek inside to check for "linkTo"
+        // Must be an object — peek inside to check for "linkTo"/"linkUps"
         let saved_pos = self.pos;
         self.expect(b'{')?;
 
@@ -288,15 +296,43 @@ impl<'a> JsonParser<'a> {
         if self.peek() == Some(b'"') {
             let key = self.parse_string()?;
 
-            if key == "linkTo" {
-                // This is a Ref: {"linkTo": "..."}
+            if key == "linkTo" || key == "linkUps" {
+                // This is a Ref — parse both keys in either order
                 self.expect(b':')?;
-                let value = self.parse_string()?;
+                let mut link_to: Option<Vec<RefSegment>> = None;
+                let mut link_ups: Option<usize> = None;
+
+                if key == "linkTo" {
+                    link_to = Some(self.parse_ref_segments()?);
+                } else {
+                    link_ups = Some(self.parse_usize()?);
+                }
+
+                // Check for second key
+                self.skip_ws();
+                if self.pos < self.input.len() && self.input[self.pos] == b',' {
+                    self.pos += 1;
+                    let key2 = self.parse_string()?;
+                    self.expect(b':')?;
+                    if key2 == "linkTo" && link_to.is_none() {
+                        link_to = Some(self.parse_ref_segments()?);
+                    } else if key2 == "linkUps" && link_ups.is_none() {
+                        link_ups = Some(self.parse_usize()?);
+                    } else {
+                        // Unknown or duplicate key — skip its value
+                        self.skip_json_value()?;
+                    }
+                }
+
                 self.expect(b'}')?;
-                return Ok(MOTLYPropertyValue::Ref(value));
+                let link_to = link_to.ok_or_else(|| "Ref object missing \"linkTo\" key".to_string())?;
+                return Ok(MOTLYPropertyValue::Ref {
+                    link_to,
+                    link_ups: link_ups.unwrap_or(0),
+                });
             }
 
-            // Not a linkTo — restore position and parse as a full node
+            // Not a linkTo/linkUps — restore position and parse as a full node
             self.pos = saved_pos;
             let node = self.parse_node()?;
             return Ok(MOTLYPropertyValue::Node(node));
@@ -306,6 +342,38 @@ impl<'a> JsonParser<'a> {
         self.pos = saved_pos;
         let node = self.parse_node()?;
         Ok(MOTLYPropertyValue::Node(node))
+    }
+
+    /// Parse a JSON array of ref segments: strings become Name, numbers become Index.
+    fn parse_ref_segments(&mut self) -> Result<Vec<RefSegment>, String> {
+        self.expect(b'[')?;
+        let mut segments = Vec::new();
+
+        if self.peek() != Some(b']') {
+            loop {
+                match self.peek() {
+                    Some(b'"') => {
+                        let name = self.parse_string()?;
+                        segments.push(RefSegment::Name(name));
+                    }
+                    Some(ch) if ch == b'-' || ch.is_ascii_digit() => {
+                        let n = self.parse_usize()?;
+                        segments.push(RefSegment::Index(n));
+                    }
+                    _ => return Err(format!("Expected string or number in linkTo array at position {}", self.pos)),
+                }
+
+                self.skip_ws();
+                if self.pos < self.input.len() && self.input[self.pos] == b',' {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.expect(b']')?;
+        Ok(segments)
     }
 
     /// Parse an eq value: a scalar, an array, or a special object
@@ -563,7 +631,10 @@ mod tests {
         let mut props = BTreeMap::new();
         props.insert(
             "link".to_string(),
-            MOTLYPropertyValue::Ref("$^parent.name".to_string()),
+            MOTLYPropertyValue::Ref {
+                link_to: vec![RefSegment::Name("parent".to_string()), RefSegment::Name("name".to_string())],
+                link_ups: 1,
+            },
         );
         v.properties = Some(props);
         let json = v.to_json();
@@ -590,7 +661,10 @@ mod tests {
         let arr = vec![
             MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::String("a".to_string())))),
             MOTLYPropertyValue::Node(MOTLYNode::with_eq(EqValue::Scalar(Scalar::Number(2.0)))),
-            MOTLYPropertyValue::Ref("$root".to_string()),
+            MOTLYPropertyValue::Ref {
+                link_to: vec![RefSegment::Name("root".to_string())],
+                link_ups: 0,
+            },
         ];
         let v = MOTLYNode::with_eq(EqValue::Array(arr));
         let json = v.to_json();

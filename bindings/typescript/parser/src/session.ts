@@ -8,6 +8,7 @@ import { parse } from "./parser";
 import { execute } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
 import { cloneNode } from "./clone";
+import { resolveTree, ResolveOptions } from "./resolve";
 
 /**
  * A stateful MOTLY parsing session.
@@ -86,6 +87,16 @@ export class MOTLYSession {
   validateReferences(): MOTLYValidationError[] {
     this.ensureAlive();
     return validateReferences(this.value);
+  }
+
+  /**
+   * Resolve the current value tree into a plain JavaScript object/value.
+   * Follows references, resolves env refs, and omits deleted nodes.
+   */
+  resolve(options?: { env?: Record<string, string | undefined> }): unknown {
+    this.ensureAlive();
+    const tree = this.getValue();
+    return resolveTree(tree, options);
   }
 
   /**

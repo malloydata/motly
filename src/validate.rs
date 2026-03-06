@@ -57,9 +57,9 @@ fn walk_refs<'a>(
             path.push(key.clone());
 
             match child_pv {
-                MOTLYPropertyValue::Ref(ref link_to) => {
+                MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
                     // This property is a reference — check it
-                    if let Some(err_msg) = check_link(link_to, ancestors, root) {
+                    if let Some(err_msg) = check_link(link_to, *link_ups, ancestors, root) {
                         errors.push(ValidationError {
                             message: err_msg,
                             path: path.clone(),
@@ -94,8 +94,8 @@ fn walk_array_refs<'a>(
         path.push(idx_key);
 
         match elem_pv {
-            MOTLYPropertyValue::Ref(ref link_to) => {
-                if let Some(err_msg) = check_link(link_to, ancestors, root) {
+            MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
+                if let Some(err_msg) = check_link(link_to, *link_ups, ancestors, root) {
                     errors.push(ValidationError {
                         message: err_msg,
                         path: path.clone(),
@@ -116,121 +116,38 @@ fn walk_array_refs<'a>(
 }
 
 /// Check whether a link resolves. Returns `Some(error_message)` on failure.
-fn check_link(link_to: &str, ancestors: &[&MOTLYNode], root: &MOTLYNode) -> Option<String> {
-    let parsed = parse_link_string(link_to);
-    let (ups, segments) = match parsed {
-        Ok((ups, segs)) => (ups, segs),
-        Err(msg) => return Some(msg),
-    };
+fn check_link(segments: &[RefSegment], ups: usize, ancestors: &[&MOTLYNode], root: &MOTLYNode) -> Option<String> {
+    let link_str = format_ref_display(ups, segments);
 
     // Determine the start node for resolution.
     let start = if ups == 0 {
-        // Absolute: start from root
         root
     } else {
-        // Relative: go up `ups` levels in the ancestor stack.
         let idx = ancestors.len().checked_sub(ups);
         match idx {
             Some(i) if i < ancestors.len() => ancestors[i],
             _ => {
                 return Some(format!(
                     "Reference \"{}\" goes {} level(s) up but only {} ancestor(s) available",
-                    link_to,
-                    ups,
-                    ancestors.len()
+                    link_str, ups, ancestors.len()
                 ));
             }
         }
     };
 
-    // Follow the path segments from the start node.
-    resolve_path(start, &segments, link_to)
-}
-
-/// Parsed reference segment for resolution.
-enum RefSeg {
-    Name(String),
-    Index(usize),
-}
-
-/// Parse a link_to string like "$^^items[0].name" into (ups, segments).
-/// Returns an error for invalid array indices.
-fn parse_link_string(s: &str) -> Result<(usize, Vec<RefSeg>), String> {
-    let mut chars = s.chars().peekable();
-
-    // Skip leading '$'
-    if chars.peek() == Some(&'$') {
-        chars.next();
-    }
-
-    // Count '^' characters
-    let mut ups = 0;
-    while chars.peek() == Some(&'^') {
-        ups += 1;
-        chars.next();
-    }
-
-    let mut segments = Vec::new();
-    let mut name_buf = String::new();
-
-    while let Some(&ch) = chars.peek() {
-        match ch {
-            '.' => {
-                if !name_buf.is_empty() {
-                    segments.push(RefSeg::Name(name_buf.clone()));
-                    name_buf.clear();
-                }
-                chars.next();
-            }
-            '[' => {
-                if !name_buf.is_empty() {
-                    segments.push(RefSeg::Name(name_buf.clone()));
-                    name_buf.clear();
-                }
-                chars.next(); // consume '['
-                let mut idx_buf = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c == ']' {
-                        chars.next();
-                        break;
-                    }
-                    idx_buf.push(c);
-                    chars.next();
-                }
-                match idx_buf.parse::<usize>() {
-                    Ok(idx) => segments.push(RefSeg::Index(idx)),
-                    Err(_) => {
-                        return Err(format!(
-                            "Reference \"{}\" has invalid array index \"[{}]\"",
-                            s, idx_buf
-                        ));
-                    }
-                }
-            }
-            _ => {
-                name_buf.push(ch);
-                chars.next();
-            }
-        }
-    }
-    if !name_buf.is_empty() {
-        segments.push(RefSeg::Name(name_buf));
-    }
-
-    Ok((ups, segments))
+    resolve_path(start, segments, &link_str)
 }
 
 /// Follow path segments from a start node. Returns Some(error) if unresolved.
-fn resolve_path(start: &MOTLYNode, segments: &[RefSeg], link_str: &str) -> Option<String> {
+fn resolve_path(start: &MOTLYNode, segments: &[RefSegment], link_str: &str) -> Option<String> {
     let mut current: ResolveTarget = ResolveTarget::Node(start);
 
     for seg in segments {
         match (seg, current) {
-            (RefSeg::Name(name), ResolveTarget::Node(node)) => {
+            (RefSegment::Name(name), ResolveTarget::Node(node)) => {
                 match &node.properties {
                     Some(props) => match props.get(name.as_str()) {
-                        Some(MOTLYPropertyValue::Ref(_)) => {
-                            // If child is a reference itself, treat as terminal
+                        Some(MOTLYPropertyValue::Ref { .. }) => {
                             current = ResolveTarget::Terminal;
                         }
                         Some(MOTLYPropertyValue::Node(child)) => {
@@ -251,7 +168,7 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSeg], link_str: &str) -> Optio
                     }
                 }
             }
-            (RefSeg::Index(idx), ResolveTarget::Node(node)) => match &node.eq {
+            (RefSegment::Index(idx), ResolveTarget::Node(node)) => match &node.eq {
                 Some(EqValue::Array(arr)) => {
                     if *idx >= arr.len() {
                         return Some(format!(
@@ -260,7 +177,7 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSeg], link_str: &str) -> Optio
                             ));
                     }
                     match &arr[*idx] {
-                        MOTLYPropertyValue::Ref(_) => {
+                        MOTLYPropertyValue::Ref { .. } => {
                             current = ResolveTarget::Terminal;
                         }
                         MOTLYPropertyValue::Node(elem) => {
@@ -276,7 +193,6 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSeg], link_str: &str) -> Optio
                 }
             },
             (_, ResolveTarget::Terminal) => {
-                // Trying to navigate further through a terminal (link).
                 return Some(format!(
                     "Reference \"{}\" could not be resolved: cannot follow path through a link",
                     link_str
@@ -285,7 +201,7 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSeg], link_str: &str) -> Optio
         }
     }
 
-    None // resolved successfully
+    None
 }
 
 enum ResolveTarget<'a> {
@@ -315,7 +231,7 @@ fn extract_section<'a>(
     let pv = node.properties.as_ref()?.get(name)?;
     match pv {
         MOTLYPropertyValue::Node(v) => v.properties.as_ref(),
-        MOTLYPropertyValue::Ref(_) => None,
+        MOTLYPropertyValue::Ref { .. } => None,
     }
 }
 
@@ -331,7 +247,7 @@ fn get_eq_string(node: &MOTLYNode) -> Option<&str> {
 fn pv_eq_string(pv: &MOTLYPropertyValue) -> Option<&str> {
     match pv {
         MOTLYPropertyValue::Node(n) => get_eq_string(n),
-        MOTLYPropertyValue::Ref(_) => None,
+        MOTLYPropertyValue::Ref { .. } => None,
     }
 }
 
@@ -451,7 +367,7 @@ fn get_additional_policy(schema: &MOTLYNode) -> AdditionalPolicy {
         None => return AdditionalPolicy::Reject,
     };
     let additional = match additional_pv {
-        MOTLYPropertyValue::Ref(_) => return AdditionalPolicy::Reject,
+        MOTLYPropertyValue::Ref { .. } => return AdditionalPolicy::Reject,
         MOTLYPropertyValue::Node(n) => n,
     };
     if let Some(eq_str) = get_eq_string(additional) {
@@ -481,7 +397,7 @@ fn validate_value_type(
 ) {
     // Skip ref type specs in schema
     let spec_node = match type_spec_pv {
-        MOTLYPropertyValue::Ref(_) => return,
+        MOTLYPropertyValue::Ref { .. } => return,
         MOTLYPropertyValue::Node(n) => n,
     };
 
@@ -494,7 +410,7 @@ fn validate_value_type(
     // Value is a Node — extract it
     let value = match value_pv {
         MOTLYPropertyValue::Node(n) => n,
-        MOTLYPropertyValue::Ref(_) => unreachable!(),
+        MOTLYPropertyValue::Ref { .. } => unreachable!(),
     };
 
     validate_node_against_type_spec(value, spec_node, types, path, errors);
@@ -624,7 +540,7 @@ fn validate_base_type(
             if let Some(types_map) = types {
                 if let Some(type_def_pv) = types_map.get(custom) {
                     match type_def_pv {
-                        MOTLYPropertyValue::Ref(_) => {
+                        MOTLYPropertyValue::Ref { .. } => {
                             // Type definition is a ref — skip
                         }
                         MOTLYPropertyValue::Node(type_def) => {
@@ -734,7 +650,7 @@ fn validate_array_type(
         let mut elem_path = path.to_vec();
         elem_path.push(format!("[{}]", i));
         match elem_pv {
-            MOTLYPropertyValue::Ref(_) => {
+            MOTLYPropertyValue::Ref { .. } => {
                 errors.push(SchemaError {
                     message: format!(
                         "Expected type \"{}\" but found a link",
@@ -776,7 +692,7 @@ fn validate_enum(
             Some(EqValue::Scalar(s)) => s == node_eq,
             _ => false,
         },
-        MOTLYPropertyValue::Ref(_) => false,
+        MOTLYPropertyValue::Ref { .. } => false,
     });
 
     if !matches {
@@ -787,7 +703,7 @@ fn validate_enum(
                     Some(EqValue::Scalar(s)) => Some(format!("{:?}", scalar_display(s))),
                     _ => None,
                 },
-                MOTLYPropertyValue::Ref(_) => None,
+                MOTLYPropertyValue::Ref { .. } => None,
             })
             .collect();
         errors.push(SchemaError {

@@ -1,5 +1,6 @@
 export type {
   MOTLYScalar,
+  MOTLYRefSegment,
   MOTLYRef,
   MOTLYEnvRef,
   MOTLYValue,
@@ -10,6 +11,6 @@ export type {
   MOTLYValidationError,
 } from "../../interface/src/types";
 
-export { isRef, isEnvRef } from "../../interface/src/types";
+export { isRef, isEnvRef, formatRef } from "../../interface/src/types";
 
 export { MOTLYSession } from "./session";

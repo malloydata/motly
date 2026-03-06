@@ -53,7 +53,6 @@ fn execute_set_eq(
 ) {
     // Special case: reference value → insert as MOTLYPropertyValue::Ref
     if let TagValue::Scalar(ScalarValue::Reference { ups, path: ref_path }) = value {
-        let ref_str = format_ref_string(*ups, ref_path);
         if properties.is_some() {
             let zero = Position {
                 line: 0,
@@ -71,7 +70,7 @@ fn execute_set_eq(
         let (write_key, parent) = build_access_path(node, path);
         parent
             .get_or_create_properties()
-            .insert(write_key, MOTLYPropertyValue::Ref(ref_str));
+            .insert(write_key, make_ref(*ups, ref_path));
         return;
     }
 
@@ -289,7 +288,6 @@ fn resolve_array_element(
 ) -> MOTLYPropertyValue {
     // Check if the element value is a reference → becomes MOTLYPropertyValue::Ref
     if let Some(TagValue::Scalar(ScalarValue::Reference { ups, path })) = &el.value {
-        let ref_str = format_ref_string(*ups, path);
         if el.properties.is_some() {
             let zero = Position {
                 line: 0,
@@ -304,7 +302,7 @@ fn resolve_array_element(
                 end: zero,
             });
         }
-        return MOTLYPropertyValue::Ref(ref_str);
+        return make_ref(*ups, path);
     }
 
     let mut node = MOTLYNode::new();
@@ -322,30 +320,22 @@ fn resolve_array_element(
     MOTLYPropertyValue::Node(node)
 }
 
-/// Format a reference path back to its string form: `$^^name[0].sub`
-fn format_ref_string(ups: usize, path: &[RefPathSegment]) -> String {
-    let mut s = String::from("$");
-    for _ in 0..ups {
-        s.push('^');
+/// Convert AST RefPathSegments to tree RefSegments and build a MOTLYPropertyValue::Ref.
+fn make_ref(ups: usize, path: &[RefPathSegment]) -> MOTLYPropertyValue {
+    MOTLYPropertyValue::Ref {
+        link_to: convert_segments(path),
+        link_ups: ups,
     }
-    let mut first = true;
-    for seg in path {
-        match seg {
-            RefPathSegment::Name(name) => {
-                if !first {
-                    s.push('.');
-                }
-                s.push_str(name);
-                first = false;
-            }
-            RefPathSegment::Index(idx) => {
-                s.push('[');
-                s.push_str(&idx.to_string());
-                s.push(']');
-            }
-        }
-    }
-    s
+}
+
+/// Convert AST RefPathSegments to tree RefSegments.
+fn convert_segments(path: &[RefPathSegment]) -> Vec<RefSegment> {
+    path.iter()
+        .map(|seg| match seg {
+            RefPathSegment::Name(name) => RefSegment::Name(name.clone()),
+            RefPathSegment::Index(idx) => RefSegment::Index(*idx),
+        })
+        .collect()
 }
 
 /// Resolve a reference path in the tree and return a deep clone.
@@ -355,7 +345,7 @@ fn resolve_and_clone(
     ups: usize,
     ref_path: &[RefPathSegment],
 ) -> Result<MOTLYNode, MOTLYError> {
-    let ref_str = format_ref_string(ups, ref_path);
+    let ref_str = format_ref_display(ups, &convert_segments(ref_path));
 
     let start: &MOTLYNode;
 
@@ -378,7 +368,7 @@ fn resolve_and_clone(
                         .and_then(|p| p.get(&stmt_path[i]))
                     {
                         Some(MOTLYPropertyValue::Node(child)) => current = child,
-                        Some(MOTLYPropertyValue::Ref(_)) => {
+                        Some(MOTLYPropertyValue::Ref { .. }) => {
                             return Err(clone_error(format!(
                                 "Clone reference {} could not be resolved: path segment \"{}\" is a link reference",
                                 ref_str, stmt_path[i]
@@ -416,7 +406,7 @@ fn resolve_and_clone(
                     .and_then(|p| p.get(name.as_str()))
                 {
                     Some(MOTLYPropertyValue::Node(child)) => current = child,
-                    Some(MOTLYPropertyValue::Ref(_)) => {
+                    Some(MOTLYPropertyValue::Ref { .. }) => {
                         return Err(clone_error(format!(
                             "Clone reference {} could not be resolved: property \"{}\" is a link reference",
                             ref_str, name
@@ -441,7 +431,7 @@ fn resolve_and_clone(
                         }
                         match &arr[*idx] {
                             MOTLYPropertyValue::Node(child) => current = child,
-                            MOTLYPropertyValue::Ref(_) => {
+                            MOTLYPropertyValue::Ref { .. } => {
                                 return Err(clone_error(format!(
                                     "Clone reference {} could not be resolved: index [{}] is a link reference",
                                     ref_str, idx
@@ -501,9 +491,10 @@ fn sanitize_cloned_pv(
     errors: &mut Vec<MOTLYError>,
 ) {
     match pv {
-        MOTLYPropertyValue::Ref(ref link_to) => {
-            let parsed_ups = parse_ref_ups(link_to);
-            if parsed_ups > 0 && parsed_ups > depth {
+        MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
+            let ups = *link_ups;
+            if ups > 0 && ups > depth {
+                let display = format_ref_display(ups, link_to);
                 let zero = Position {
                     line: 0,
                     column: 0,
@@ -513,12 +504,12 @@ fn sanitize_cloned_pv(
                     code: "clone-reference-out-of-scope".to_string(),
                     message: format!(
                         "Cloned reference \"{}\" escapes the clone boundary ({} level(s) up from depth {})",
-                        link_to, parsed_ups, depth
+                        display, ups, depth
                     ),
                     begin: zero,
                     end: zero,
                 });
-                // Convert to empty node (equivalent to old node.eq = None)
+                // Convert to empty node
                 *pv = MOTLYPropertyValue::Node(MOTLYNode::new());
             }
         }
@@ -526,21 +517,4 @@ fn sanitize_cloned_pv(
             sanitize_cloned_refs(node, depth, errors);
         }
     }
-}
-
-/// Extract the ups count from a linkTo string like "$^^name".
-fn parse_ref_ups(link_to: &str) -> usize {
-    let mut chars = link_to.chars();
-    if chars.next() != Some('$') {
-        return 0;
-    }
-    let mut ups = 0;
-    for ch in chars {
-        if ch == '^' {
-            ups += 1;
-        } else {
-            break;
-        }
-    }
-    ups
 }

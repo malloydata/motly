@@ -1,9 +1,13 @@
 /** A MOTLY scalar: string, number, boolean, or Date. */
 export type MOTLYScalar = string | number | boolean | Date;
 
+/** A segment in a reference path: a property name (string) or an array index (number). */
+export type MOTLYRefSegment = string | number;
+
 /** A reference to another node in the MOTLY tree (e.g. `$^parent.name`). */
 export interface MOTLYRef {
-  linkTo: string;
+  linkTo: MOTLYRefSegment[];
+  linkUps: number;
 }
 
 /** An environment variable reference (e.g. `@env.API_KEY`). */
@@ -58,9 +62,26 @@ export interface MOTLYSchemaError {
   path: string[];
 }
 
+/** Format a MOTLYRef for display (e.g. `$^^parent.name`). */
+export function formatRef(link: MOTLYRef): string {
+  let s = "$";
+  for (let i = 0; i < link.linkUps; i++) s += "^";
+  let first = true;
+  for (const seg of link.linkTo) {
+    if (typeof seg === "string") {
+      if (!first) s += ".";
+      s += seg;
+      first = false;
+    } else {
+      s += `[${seg}]`;
+    }
+  }
+  return s;
+}
+
 /** Type guard: is this property value a link reference? */
 export function isRef(pv: MOTLYPropertyValue | undefined): pv is MOTLYRef {
-  return typeof pv === "object" && pv !== null && "linkTo" in pv && !Array.isArray(pv) && !(pv instanceof Date);
+  return typeof pv === "object" && pv !== null && "linkTo" in pv && "linkUps" in pv && !Array.isArray(pv) && !(pv instanceof Date);
 }
 
 /** Type guard: is this eq value an env reference? */

@@ -2,10 +2,12 @@ import {
   MOTLYNode,
   MOTLYPropertyValue,
   MOTLYRef,
+  MOTLYRefSegment,
   MOTLYSchemaError,
   MOTLYValidationError,
   isRef,
   isEnvRef,
+  formatRef,
 } from "../../interface/src/types";
 
 function getEqString(node: MOTLYNode): string | undefined {
@@ -56,7 +58,7 @@ function walkRefs(
 
       if (isRef(childPv)) {
         // This property is a reference — check it
-        const errMsg = checkLink(childPv.linkTo, ancestors, root);
+        const errMsg = checkLink(childPv, ancestors, root);
         if (errMsg !== null) {
           errors.push({
             message: errMsg,
@@ -90,7 +92,7 @@ function walkArrayRefs(
     path.push(idxKey);
 
     if (isRef(elemPv)) {
-      const errMsg = checkLink(elemPv.linkTo, ancestors, root);
+      const errMsg = checkLink(elemPv, ancestors, root);
       if (errMsg !== null) {
         errors.push({
           message: errMsg,
@@ -110,82 +112,29 @@ function walkArrayRefs(
 }
 
 function checkLink(
-  linkTo: string,
+  link: MOTLYRef,
   ancestors: MOTLYNode[],
   root: MOTLYNode
 ): string | null {
-  const { ups, segments, error } = parseLinkString(linkTo);
-  if (error !== null) return error;
+  const linkStr = formatRef(link);
 
   let start: MOTLYNode;
-  if (ups === 0) {
+  if (link.linkUps === 0) {
     start = root;
   } else {
-    const idx = ancestors.length - ups;
+    const idx = ancestors.length - link.linkUps;
     if (idx < 0 || idx >= ancestors.length) {
-      return `Reference "${linkTo}" goes ${ups} level(s) up but only ${ancestors.length} ancestor(s) available`;
+      return `Reference "${linkStr}" goes ${link.linkUps} level(s) up but only ${ancestors.length} ancestor(s) available`;
     }
     start = ancestors[idx];
   }
 
-  return resolvePath(start, segments, linkTo);
-}
-
-type RefSeg = { kind: "name"; name: string } | { kind: "index"; index: number };
-
-function parseLinkString(s: string): { ups: number; segments: RefSeg[]; error: string | null } {
-  let i = 0;
-  if (i < s.length && s[i] === "$") i++;
-
-  let ups = 0;
-  while (i < s.length && s[i] === "^") {
-    ups++;
-    i++;
-  }
-
-  const segments: RefSeg[] = [];
-  let nameBuf = "";
-
-  while (i < s.length) {
-    const ch = s[i];
-    if (ch === ".") {
-      if (nameBuf.length > 0) {
-        segments.push({ kind: "name", name: nameBuf });
-        nameBuf = "";
-      }
-      i++;
-    } else if (ch === "[") {
-      if (nameBuf.length > 0) {
-        segments.push({ kind: "name", name: nameBuf });
-        nameBuf = "";
-      }
-      i++;
-      let idxBuf = "";
-      while (i < s.length && s[i] !== "]") {
-        idxBuf += s[i];
-        i++;
-      }
-      if (i < s.length) i++; // skip ']'
-      const idx = parseInt(idxBuf, 10);
-      if (isNaN(idx) || idx < 0) {
-        return { ups, segments, error: `Reference "${s}" has invalid array index [${idxBuf}]` };
-      }
-      segments.push({ kind: "index", index: idx });
-    } else {
-      nameBuf += ch;
-      i++;
-    }
-  }
-  if (nameBuf.length > 0) {
-    segments.push({ kind: "name", name: nameBuf });
-  }
-
-  return { ups, segments, error: null };
+  return resolvePath(start, link.linkTo, linkStr);
 }
 
 function resolvePath(
   start: MOTLYNode,
-  segments: RefSeg[],
+  segments: MOTLYRefSegment[],
   linkStr: string
 ): string | null {
   let current: MOTLYNode | "terminal" = start;
@@ -195,13 +144,13 @@ function resolvePath(
       return `Reference "${linkStr}" could not be resolved: cannot follow path through a link`;
     }
 
-    if (seg.kind === "name") {
+    if (typeof seg === "string") {
       if (!current.properties) {
-        return `Reference "${linkStr}" could not be resolved: property "${seg.name}" not found (node has no properties)`;
+        return `Reference "${linkStr}" could not be resolved: property "${seg}" not found (node has no properties)`;
       }
-      const childPv: MOTLYPropertyValue | undefined = current.properties[seg.name];
+      const childPv: MOTLYPropertyValue | undefined = current.properties[seg];
       if (childPv === undefined) {
-        return `Reference "${linkStr}" could not be resolved: property "${seg.name}" not found`;
+        return `Reference "${linkStr}" could not be resolved: property "${seg}" not found`;
       }
       if (isRef(childPv)) {
         current = "terminal";
@@ -210,12 +159,12 @@ function resolvePath(
       }
     } else {
       if (current.eq === undefined || !Array.isArray(current.eq)) {
-        return `Reference "${linkStr}" could not be resolved: index [${seg.index}] used on non-array`;
+        return `Reference "${linkStr}" could not be resolved: index [${seg}] used on non-array`;
       }
-      if (seg.index >= current.eq.length) {
-        return `Reference "${linkStr}" could not be resolved: index [${seg.index}] out of bounds (array length ${current.eq.length})`;
+      if (seg >= current.eq.length) {
+        return `Reference "${linkStr}" could not be resolved: index [${seg}] out of bounds (array length ${current.eq.length})`;
       }
-      const elemPv: MOTLYPropertyValue = current.eq[seg.index];
+      const elemPv: MOTLYPropertyValue = current.eq[seg];
       if (isRef(elemPv)) {
         current = "terminal";
       } else {

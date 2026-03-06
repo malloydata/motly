@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc",
     "build:test": "tsc -p test/tsconfig.json",
-    "test": "npm run build && npm run build:test && node --test build-test/test.js",
+    "test": "npm run build && npm run build:test && node --test build-test/*.js",
     "clean": "rm -rf build build-test",
     "pack": "npm run build && npm pack"
   },

@@ -4,7 +4,7 @@ import {
   ArrayElement,
   RefPathSegment,
 } from "./ast";
-import { MOTLYNode, MOTLYPropertyValue, MOTLYError, isRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYError, isRef, formatRef } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
 /** Execute a list of parsed statements against an existing MOTLYNode. */
@@ -56,7 +56,6 @@ function executeSetEq(
 ): void {
   // Special case: reference value → insert as MOTLYRef
   if (value.kind === "scalar" && value.value.kind === "reference") {
-    const refStr = formatRefString(value.value.ups, value.value.path);
     if (properties !== null) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
@@ -67,7 +66,7 @@ function executeSetEq(
       });
     }
     const [writeKey, parent] = buildAccessPath(node, path);
-    getOrCreateProperties(parent)[writeKey] = { linkTo: refStr };
+    getOrCreateProperties(parent)[writeKey] = makeRef(value.value.ups, value.value.path);
     return;
   }
 
@@ -278,7 +277,6 @@ function resolveArray(elements: ArrayElement[], errors: MOTLYError[]): MOTLYProp
 function resolveArrayElement(el: ArrayElement, errors: MOTLYError[]): MOTLYPropertyValue {
   // Check if the element value is a reference → becomes MOTLYRef
   if (el.value !== null && el.value.kind === "scalar" && el.value.value.kind === "reference") {
-    const refStr = formatRefString(el.value.value.ups, el.value.value.path);
     if (el.properties !== null) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
@@ -288,7 +286,7 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[]): MOTLYPrope
         end: zero,
       });
     }
-    return { linkTo: refStr };
+    return makeRef(el.value.value.ups, el.value.value.path);
   }
 
   const node: MOTLYNode = {};
@@ -306,8 +304,16 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[]): MOTLYPrope
   return node;
 }
 
-/** Format a reference path back to its string form: `$^^name[0].sub` */
-function formatRefString(ups: number, path: RefPathSegment[]): string {
+/** Build a structured MOTLYRef from parsed AST reference data. */
+function makeRef(ups: number, path: RefPathSegment[]): MOTLYRef {
+  return {
+    linkTo: path.map((seg) => seg.kind === "name" ? seg.name : seg.index),
+    linkUps: ups,
+  };
+}
+
+/** Format ups + AST path for error messages (used before ref is constructed). */
+function formatRefPath(ups: number, path: RefPathSegment[]): string {
   let s = "$";
   for (let i = 0; i < ups; i++) s += "^";
   let first = true;
@@ -330,7 +336,7 @@ function resolveAndClone(
   ups: number,
   refPath: RefPathSegment[]
 ): MOTLYNode {
-  const refStr = formatRefString(ups, refPath);
+  const refStr = formatRefPath(ups, refPath);
   let start: MOTLYNode;
 
   if (ups === 0) {
@@ -429,12 +435,11 @@ function sanitizeClonedPv(
 ): void {
   const pv = arr[index];
   if (isRef(pv)) {
-    const parsed = parseRefUps(pv.linkTo);
-    if (parsed.ups > 0 && parsed.ups > depth) {
+    if (pv.linkUps > 0 && pv.linkUps > depth) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
         code: "clone-reference-out-of-scope",
-        message: `Cloned reference "${pv.linkTo}" escapes the clone boundary (${parsed.ups} level(s) up from depth ${depth})`,
+        message: `Cloned reference "${formatRef(pv)}" escapes the clone boundary (${pv.linkUps} level(s) up from depth ${depth})`,
         begin: zero,
         end: zero,
       });
@@ -455,12 +460,11 @@ function sanitizeClonedPvInProps(
 ): void {
   const pv = props[key];
   if (isRef(pv)) {
-    const parsed = parseRefUps(pv.linkTo);
-    if (parsed.ups > 0 && parsed.ups > depth) {
+    if (pv.linkUps > 0 && pv.linkUps > depth) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
         code: "clone-reference-out-of-scope",
-        message: `Cloned reference "${pv.linkTo}" escapes the clone boundary (${parsed.ups} level(s) up from depth ${depth})`,
+        message: `Cloned reference "${formatRef(pv)}" escapes the clone boundary (${pv.linkUps} level(s) up from depth ${depth})`,
         begin: zero,
         end: zero,
       });
@@ -470,18 +474,6 @@ function sanitizeClonedPvInProps(
   } else {
     sanitizeClonedRefs(pv, depth, errors);
   }
-}
-
-/** Extract the ups count from a linkTo string like "$^^name". */
-function parseRefUps(linkTo: string): { ups: number } {
-  let i = 0;
-  if (i < linkTo.length && linkTo[i] === "$") i++;
-  let ups = 0;
-  while (i < linkTo.length && linkTo[i] === "^") {
-    ups++;
-    i++;
-  }
-  return { ups };
 }
 
 /** Get or create the properties object on a MOTLYNode. */

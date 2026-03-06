@@ -447,8 +447,9 @@ fn test_json_link() {
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // References are now top-level {"linkTo": "..."} (not inside eq)
-    assert_eq!(v["properties"]["ref"]["linkTo"], "$target");
+    // References are structured: {"linkTo": [...], "linkUps": N}
+    assert_eq!(v["properties"]["ref"]["linkTo"], serde_json::json!(["target"]));
+    assert_eq!(v["properties"]["ref"]["linkUps"], 0);
 }
 
 #[test]
