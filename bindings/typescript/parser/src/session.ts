@@ -8,7 +8,7 @@ import { parse } from "./parser";
 import { execute } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
 import { cloneNode } from "./clone";
-import { resolveTree, ResolveOptions } from "./resolve";
+import { Mot, GetMotOptions, buildMot } from "./mot";
 
 /**
  * A stateful MOTLY parsing session.
@@ -90,13 +90,13 @@ export class MOTLYSession {
   }
 
   /**
-   * Resolve the current value tree into a plain JavaScript object/value.
+   * Return a resolved Mot view of the current value.
    * Follows references, resolves env refs, and omits deleted nodes.
    */
-  resolve(options?: { env?: Record<string, string | undefined> }): unknown {
+  getMot(options?: GetMotOptions): Mot {
     this.ensureAlive();
     const tree = this.getValue();
-    return resolveTree(tree, options);
+    return buildMot(tree, options);
   }
 
   /**

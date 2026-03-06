@@ -13,4 +13,5 @@ export type {
 
 export { isRef, isEnvRef, formatRef } from "../../interface/src/types";
 
+export type { Mot, GetMotOptions } from "./mot";
 export { MOTLYSession } from "./session";
