@@ -10,47 +10,28 @@ Instead of `getValue()` returning a plain object that consumers wrap in their ow
 
 This is a breaking change from the current parse-only API, which is why we're shipping 0.0.1 first to validate usefulness.
 
-## DOM API
+## Mot: The Read API
 
-### MOTLYNode Interface
+The first step toward a full DOM is the read-only `Mot` interface — a resolved,
+typed, navigable view of parsed MOTLY data. Refs followed, env vars substituted,
+deletions consumed. The consumer sees clean data; the internal model retains
+provenance for future mutation support.
 
-Typed accessors (all take `...path: PathSegment[]`):
-- `.text()`, `.number()`, `.boolean()`, `.date()`
+**Status**: TypeScript implementation complete (`bindings/typescript/parser/src/mot.ts`).
+`session.getMot({ env })` returns a `Mot`. Replaces the old untyped `resolve()`
+that returned plain JS objects.
 
-Array accessors:
-- `.array()`, `.textArray()`, `.numericArray()`
+Cross-language API design notes:
+- **Rust**: [`docs/mot-api-rust.md`](docs/mot-api-rust.md) — `Option<&Mot>` instead of Null Object pattern; `get()` + `get_path()` instead of variadic; arena allocation for circular refs
+- **Python**: [`docs/mot-api-python.md`](docs/mot-api-python.md) — Null Object pattern translates directly; dunder support (`__getitem__`, `__contains__`, `__bool__`) for Pythonic usage
 
-Structure:
-- `.node()`, `.has()`, `.bare()`, `.keys()`, `.entries()`
+### Future: Mutation and Serialization
 
-Ref inspection:
-- `.isRef`, `.refTarget`
+The Mot read API is the foundation for a richer DOM:
 
-Serialization:
-- `.prefix`
-
-Content replacement:
-- `.innerMOTLY` (write-only setter)
-
-### MOTLYSession Additions
-
-- `root: MOTLYNode` — DOM access
 - `setEq(path, value)`, `setProperty(path)`, `deleteProperty(path)` — permissive mutations (always apply, validate on demand)
-- `validateReferences()` — separate from schema validation
 - `snapshot()` / `restore(snapshot)` — rollback support
 - `serialize()` / `serializeAt(path)` — MOTLY source output
-
-### Types
-
-- `MOTLYScalar = string | number | boolean | Date`
-- `PathSegment = string | number`
-- `Path = PathSegment[]`
-
-### Key Decisions
-
-- Mutations are permissive (always apply), validate on demand
-- Refs resolve transparently but are inspectable
-- Path varargs for reads, array for mutations
 
 ### Open Questions
 
@@ -58,20 +39,7 @@ Content replacement:
 2. Node identity — same object or fresh wrapper on repeated access?
 3. Array mutation — `setEq` with array? `appendToArray`? or just innerMOTLY/parse?
 4. Integer vs float in schemas
-5. `innerMOTLY` vs `parseAt` — is replace sufficient or also need merge?
-6. Snapshot representation — opaque handle vs serialized string
-
-### Implementation Roadmap
-
-1. Lock down interface in `motly-ts-interface`
-2. Implement TS DOM in `motly-ts-interface` (shared by both TS packages)
-3. Add shared DOM test fixtures in `test-data/fixtures/`
-4. Rewrite pure TS interpreter to produce DOM nodes directly
-5. Update WASM package to construct DOM from Rust output
-6. Implement Rust DOM (for Python/Ruby/Go bindings)
-7. Add serializer (TS first, then Rust)
-8. Add snapshot/restore
-9. MOTLYValue removed from public API
+5. Snapshot representation — opaque handle vs serialized string
 
 ## Schema Metadata
 
@@ -126,19 +94,67 @@ The WASM package (`bindings/typescript/wasm/`) has been removed for the 0.0.1 re
 
 The Rust side already has the FFI layer (`src/lib.rs` exposes `wasm_session_*` functions). Reintroduction is a packaging and CI task, not a design task.
 
-## Multi-Language Bindings
+## Multi-Language Strategy
 
-Once the Rust DOM is implemented (step 6 in the DOM roadmap), it can be exposed to Python, Ruby, Go, and other languages through their respective FFI mechanisms. The Rust core becomes the shared engine; each language gets native-feeling bindings.
+There are two paths for supporting new languages: **FFI bindings** (wrap the
+Rust implementation via PyO3, CGo, etc.) or **native implementations** (rewrite
+the parser in each language, validated against the shared test fixtures).
 
-## Dual Implementation Strategy
+### FFI Bindings (Rust as shared engine)
 
-The parser and interpreter exist in both Rust and pure TypeScript. Both implementations must stay in sync:
+- One implementation to maintain
+- But: build complexity (manylinux wheels, cross-compilation), debugging across
+  FFI boundaries, platform matrix headaches, native dep install friction
 
+### Native Implementations (shared test suite as spec)
+
+This is already the model for TypeScript — the pure TS parser is an independent
+implementation validated by the same fixtures in `test-data/fixtures/`. It has
+zero native dependencies and installs everywhere.
+
+Advantages of extending this to Python, Go, etc.:
+- **Zero native deps** — `pip install` / `go get` just works, no compilation
+- **Debuggable** — users step through code in their own language
+- **Contributable** — Python devs fix Python bugs without knowing Rust
+- **AI-assisted porting** — given fixtures + a reference implementation,
+  generating a new port is a well-defined task with a clear done-state
+
+The cost model has shifted: maintaining N implementations used to be prohibitive,
+but with a solid test suite and AI assistance, the marginal cost of a new port
+is lower than the ongoing tax of FFI bindings.
+
+### The tradeoff: language changes become expensive
+
+Every language feature addition or behavioral change must be applied to every
+implementation. The shared fixtures catch regressions, but the implementation
+work scales with the number of ports. This is manageable with two implementations
+(Rust + TS) but gets heavy at four or five.
+
+### Recommendation
+
+- **TypeScript**: native (already done, zero-dep npm is a hard requirement)
+- **Python**: native (pip install simplicity matters; parser is ~1300 lines)
+- **Go**: native (Go developers strongly prefer pure Go)
+- **Rust**: the reference implementation
+- **WASM**: compile from Rust (for environments that need it)
+
+Use differential fuzzing (see below) to keep implementations in sync.
+Fixtures are the spec; implementations are commodities.
+
+## Implementation Sync
+
+All implementations must produce identical results for the shared test fixtures
+in `test-data/fixtures/`. The fixtures are the specification; the implementations
+are interchangeable.
+
+Current implementations:
 - `src/parser.rs` ↔ `bindings/typescript/parser/src/parser.ts`
 - `src/interpreter.rs` ↔ `bindings/typescript/parser/src/interpreter.ts`
 - `src/validate.rs` ↔ `bindings/typescript/parser/src/validate.ts`
 
-Shared test fixtures in `test-data/fixtures/` are the single source of truth for correctness. Any feature or fix applied to one implementation must be applied to the other.
+Any language feature or behavioral change must update the fixtures first, then
+each implementation. As the number of ports grows, the fixtures become
+increasingly important as the single source of truth.
 
 ### Future: Differential Fuzzing
 

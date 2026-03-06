@@ -7,25 +7,76 @@ import {
   isEnvRef,
 } from "../../interface/src/types";
 
+/**
+ * A resolved, read-only view of a MOTLY node.
+ *
+ * Every `Mot` has two independent aspects: a **value** (scalar, array, or
+ * nothing) and **properties** (named child Mots). References have been
+ * followed, environment variables substituted, and deletions consumed.
+ *
+ * Navigation with {@link get} never returns `undefined` — missing paths
+ * produce the **Undefined Mot**, a singleton where `exists` is `false`
+ * and all accessors return `undefined`. This enables safe chaining:
+ *
+ * ```ts
+ * const port = config.get("server", "port").number; // number | undefined
+ * ```
+ */
 export interface Mot {
+  /** `true` for any real node (including flags with no value). `false` only for the Undefined Mot. */
   readonly exists: boolean;
+
+  /** The type of the value slot, or `undefined` if the node has no value (flag or Undefined Mot). */
   readonly valueType: "string" | "number" | "boolean" | "date" | "array" | undefined;
+
+  /** The string value, or `undefined` if the value is not a string. */
   readonly text: string | undefined;
+  /** The numeric value, or `undefined` if the value is not a number. */
   readonly number: number | undefined;
+  /** The boolean value, or `undefined` if the value is not a boolean. */
   readonly boolean: boolean | undefined;
+  /** The date value, or `undefined` if the value is not a date. */
   readonly date: Date | undefined;
+
+  /** The array elements as Mots, or `undefined` if the value is not an array. */
   readonly values: Mot[] | undefined;
+  /** All array elements as strings, or `undefined` if any element is not a string. */
   readonly texts: string[] | undefined;
+  /** All array elements as numbers, or `undefined` if any element is not a number. */
   readonly numbers: number[] | undefined;
+  /** All array elements as booleans, or `undefined` if any element is not a boolean. */
   readonly booleans: boolean[] | undefined;
+  /** All array elements as Dates, or `undefined` if any element is not a date. */
   readonly dates: Date[] | undefined;
+
+  /** The property names. Empty for nodes with no properties and for the Undefined Mot. */
   readonly keys: Iterable<string>;
+  /** The `[name, Mot]` pairs for all properties. */
   readonly entries: Iterable<[string, Mot]>;
+
+  /**
+   * Walk into properties by name. Returns the Mot at the end of the path.
+   * If any step does not exist, returns the Undefined Mot.
+   *
+   * ```ts
+   * config.get("server", "port")       // equivalent to
+   * config.get("server").get("port")
+   * ```
+   */
   get(...props: string[]): Mot;
+
+  /**
+   * Returns `true` if the full property path exists.
+   * Equivalent to `.get(...props).exists`.
+   */
   has(...props: string[]): boolean;
 }
 
+/**
+ * Options for {@link MOTLYSession.getMot}.
+ */
 export interface GetMotOptions {
+  /** Environment variable map for resolving `@env.NAME` references. */
   env?: Record<string, string | undefined>;
 }
 
