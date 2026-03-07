@@ -3,40 +3,53 @@ import {
   TagValue,
   ArrayElement,
   RefPathSegment,
+  Span,
 } from "./ast";
-import { MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYError, isRef, formatRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYError, MOTLYLocation, isRef, formatRef } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
 /** Execute a list of parsed statements against an existing MOTLYNode. */
-export function execute(statements: Statement[], root: MOTLYNode): MOTLYError[] {
+export function execute(statements: Statement[], root: MOTLYNode, parseId: number): MOTLYError[] {
   const errors: MOTLYError[] = [];
   for (const stmt of statements) {
-    executeStatement(stmt, root, errors);
+    executeStatement(stmt, root, errors, parseId);
   }
   return errors;
 }
 
-function executeStatement(stmt: Statement, node: MOTLYNode, errors: MOTLYError[]): void {
+function executeStatement(stmt: Statement, node: MOTLYNode, errors: MOTLYError[], parseId: number): void {
   switch (stmt.kind) {
     case "setEq":
-      executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors);
+      executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors, parseId, stmt.span);
       break;
     case "assignBoth":
-      executeAssignBoth(node, stmt.path, stmt.value, stmt.properties, errors);
+      executeAssignBoth(node, stmt.path, stmt.value, stmt.properties, errors, parseId, stmt.span);
       break;
     case "replaceProperties":
-      executeReplaceProperties(node, stmt.path, stmt.properties, errors);
+      executeReplaceProperties(node, stmt.path, stmt.properties, errors, parseId, stmt.span);
       break;
     case "updateProperties":
-      executeUpdateProperties(node, stmt.path, stmt.properties, errors);
+      executeUpdateProperties(node, stmt.path, stmt.properties, errors, parseId, stmt.span);
       break;
     case "define":
-      executeDefine(node, stmt.path, stmt.deleted);
+      executeDefine(node, stmt.path, stmt.deleted, parseId, stmt.span);
       break;
     case "clearAll":
       delete node.eq;
       node.properties = {};
       break;
+  }
+}
+
+/** Build a MOTLYLocation from a parseId and span. */
+function makeLocation(parseId: number, span: Span): MOTLYLocation {
+  return { parseId, begin: span.begin, end: span.end };
+}
+
+/** Set location on a node only if it doesn't already have one (first-appearance rule). */
+function setFirstLocation(node: MOTLYNode, parseId: number, span: Span): void {
+  if (!node.location) {
+    node.location = makeLocation(parseId, span);
   }
 }
 
@@ -52,7 +65,9 @@ function executeSetEq(
   path: string[],
   value: TagValue,
   properties: Statement[] | null,
-  errors: MOTLYError[]
+  errors: MOTLYError[],
+  parseId: number,
+  span: Span
 ): void {
   // Special case: reference value → insert as MOTLYRef
   if (value.kind === "scalar" && value.value.kind === "reference") {
@@ -65,12 +80,12 @@ function executeSetEq(
         end: zero,
       });
     }
-    const [writeKey, parent] = buildAccessPath(node, path);
+    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
     getOrCreateProperties(parent)[writeKey] = makeRef(value.value.ups, value.value.path);
     return;
   }
 
-  const [writeKey, parent] = buildAccessPath(node, path);
+  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
   const props = getOrCreateProperties(parent);
 
   // Get or create target (preserves existing node and its properties)
@@ -83,13 +98,16 @@ function executeSetEq(
   // If it was a ref, convert to empty node
   const target = ensureNode(props, writeKey);
 
+  // Set location on first appearance
+  setFirstLocation(target, parseId, span);
+
   // Set the value slot
-  setEqSlot(target, value);
+  setEqSlot(target, value, parseId);
 
   // If properties block present, MERGE them
   if (properties !== null) {
     for (const s of properties) {
-      executeStatement(s, target, errors);
+      executeStatement(s, target, errors, parseId);
     }
   }
 }
@@ -105,7 +123,9 @@ function executeAssignBoth(
   path: string[],
   value: TagValue,
   properties: Statement[] | null,
-  errors: MOTLYError[]
+  errors: MOTLYError[],
+  parseId: number,
+  span: Span
 ): void {
   if (
     value.kind === "scalar" &&
@@ -131,21 +151,25 @@ function executeAssignBoth(
     if (properties !== null) {
       cloned.properties = {};
       for (const s of properties) {
-        executeStatement(s, cloned, errors);
+        executeStatement(s, cloned, errors, parseId);
       }
     }
-    const [writeKey, parent] = buildAccessPath(node, path);
+    // := always sets a new location (it's a full replacement)
+    cloned.location = makeLocation(parseId, span);
+    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
     getOrCreateProperties(parent)[writeKey] = cloned;
   } else {
     // Literal value: create fresh node (replaces everything)
     const result: MOTLYNode = {};
-    setEqSlot(result, value);
+    // := always sets a new location
+    result.location = makeLocation(parseId, span);
+    setEqSlot(result, value, parseId);
     if (properties !== null) {
       for (const s of properties) {
-        executeStatement(s, result, errors);
+        executeStatement(s, result, errors, parseId);
       }
     }
-    const [writeKey, parent] = buildAccessPath(node, path);
+    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
     getOrCreateProperties(parent)[writeKey] = result;
   }
 }
@@ -157,9 +181,11 @@ function executeReplaceProperties(
   node: MOTLYNode,
   path: string[],
   properties: Statement[],
-  errors: MOTLYError[]
+  errors: MOTLYError[],
+  parseId: number,
+  span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path);
+  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
 
   const result: MOTLYNode = {};
 
@@ -168,10 +194,19 @@ function executeReplaceProperties(
   const existing = parentProps[writeKey];
   if (existing !== undefined && !isRef(existing)) {
     result.eq = existing.eq;
+    // Preserve the existing location (first-appearance rule)
+    if (existing.location) {
+      result.location = existing.location;
+    }
+  }
+
+  // If no existing location, this is the first appearance
+  if (!result.location) {
+    result.location = makeLocation(parseId, span);
   }
 
   for (const stmt of properties) {
-    executeStatement(stmt, result, errors);
+    executeStatement(stmt, result, errors, parseId);
   }
 
   parentProps[writeKey] = result;
@@ -181,9 +216,11 @@ function executeUpdateProperties(
   node: MOTLYNode,
   path: string[],
   properties: Statement[],
-  errors: MOTLYError[]
+  errors: MOTLYError[],
+  parseId: number,
+  span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path);
+  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
 
   const props = getOrCreateProperties(parent);
 
@@ -194,24 +231,33 @@ function executeUpdateProperties(
 
   const target = ensureNode(props, writeKey);
 
+  // Set location on first appearance
+  setFirstLocation(target, parseId, span);
+
   for (const stmt of properties) {
-    executeStatement(stmt, target, errors);
+    executeStatement(stmt, target, errors, parseId);
   }
 }
 
 function executeDefine(
   node: MOTLYNode,
   path: string[],
-  deleted: boolean
+  deleted: boolean,
+  parseId: number,
+  span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path);
+  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
   const props = getOrCreateProperties(parent);
   if (deleted) {
-    props[writeKey] = { deleted: true };
+    const delNode: MOTLYNode = { deleted: true };
+    delNode.location = makeLocation(parseId, span);
+    props[writeKey] = delNode;
   } else {
     // Get-or-create: if node already exists, leave it alone
     if (props[writeKey] === undefined) {
-      props[writeKey] = {};
+      const newNode: MOTLYNode = {};
+      newNode.location = makeLocation(parseId, span);
+      props[writeKey] = newNode;
     }
   }
 }
@@ -219,7 +265,9 @@ function executeDefine(
 /** Navigate to the parent of the final path segment, creating intermediate nodes. */
 function buildAccessPath(
   node: MOTLYNode,
-  path: string[]
+  path: string[],
+  parseId: number,
+  span: Span
 ): [string, MOTLYNode] {
   let current = node;
 
@@ -228,19 +276,23 @@ function buildAccessPath(
     const props = getOrCreateProperties(current);
 
     if (props[segment] === undefined) {
-      props[segment] = {};
+      const intermediate: MOTLYNode = {};
+      intermediate.location = makeLocation(parseId, span);
+      props[segment] = intermediate;
     }
 
     current = ensureNode(props, segment);
+    // Set location on intermediate nodes (first-appearance)
+    setFirstLocation(current, parseId, span);
   }
 
   return [path[path.length - 1], current];
 }
 
 /** Set the eq slot on a target node from a TagValue. */
-function setEqSlot(target: MOTLYNode, value: TagValue): void {
+function setEqSlot(target: MOTLYNode, value: TagValue, parseId: number): void {
   if (value.kind === "array") {
-    target.eq = resolveArray(value.elements, []);
+    target.eq = resolveArray(value.elements, [], parseId);
   } else {
     const sv = value.value;
     switch (sv.kind) {
@@ -270,11 +322,11 @@ function setEqSlot(target: MOTLYNode, value: TagValue): void {
 }
 
 /** Resolve an array of AST elements to MOTLYPropertyValues. */
-function resolveArray(elements: ArrayElement[], errors: MOTLYError[]): MOTLYPropertyValue[] {
-  return elements.map((el) => resolveArrayElement(el, errors));
+function resolveArray(elements: ArrayElement[], errors: MOTLYError[], parseId: number): MOTLYPropertyValue[] {
+  return elements.map((el) => resolveArrayElement(el, errors, parseId));
 }
 
-function resolveArrayElement(el: ArrayElement, errors: MOTLYError[]): MOTLYPropertyValue {
+function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: number): MOTLYPropertyValue {
   // Check if the element value is a reference → becomes MOTLYRef
   if (el.value !== null && el.value.kind === "scalar" && el.value.value.kind === "reference") {
     if (el.properties !== null) {
@@ -290,14 +342,15 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[]): MOTLYPrope
   }
 
   const node: MOTLYNode = {};
+  node.location = makeLocation(parseId, el.span);
 
   if (el.value !== null) {
-    setEqSlot(node, el.value);
+    setEqSlot(node, el.value, parseId);
   }
 
   if (el.properties !== null) {
     for (const stmt of el.properties) {
-      executeStatement(stmt, node, errors);
+      executeStatement(stmt, node, errors, parseId);
     }
   }
 

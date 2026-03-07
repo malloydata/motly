@@ -4,6 +4,7 @@ import {
   TagValue,
   ArrayElement,
   RefPathSegment,
+  Span,
 } from "./ast";
 import { MOTLYError } from "../../interface/src/types";
 
@@ -127,17 +128,19 @@ class Parser {
   }
 
   private parseStatement(): Statement {
+    const begin = this.position();
+
     // -... (clearAll)
     if (this.startsWith("-...")) {
       this.advance(4);
-      return { kind: "clearAll" };
+      return { kind: "clearAll", span: { begin, end: this.position() } };
     }
 
     // -name (define deleted)
     if (this.peekChar() === "-") {
       this.advance(1);
       const path = this.parsePropName();
-      return { kind: "define", path, deleted: true };
+      return { kind: "define", path, deleted: true, span: { begin, end: this.position() } };
     }
 
     // Parse the property path
@@ -154,9 +157,9 @@ class Parser {
       this.skipWs();
       if (this.peekChar() === "{") {
         const props = this.parsePropertiesBlock();
-        return { kind: "assignBoth", path, value, properties: props };
+        return { kind: "assignBoth", path, value, properties: props, span: { begin, end: this.position() } };
       }
-      return { kind: "assignBoth", path, value, properties: null };
+      return { kind: "assignBoth", path, value, properties: null, span: { begin, end: this.position() } };
     }
 
     if (ch === "=") {
@@ -177,25 +180,25 @@ class Parser {
       // Optional { props } block (MERGE semantics)
       if (this.peekChar() === "{") {
         const props = this.parsePropertiesBlock();
-        return { kind: "setEq", path, value, properties: props };
+        return { kind: "setEq", path, value, properties: props, span: { begin, end: this.position() } };
       }
 
-      return { kind: "setEq", path, value, properties: null };
+      return { kind: "setEq", path, value, properties: null, span: { begin, end: this.position() } };
     }
 
     if (ch === ":") {
       this.advance(1);
       this.skipWs();
       const props = this.parsePropertiesBlock();
-      return { kind: "replaceProperties", path, properties: props };
+      return { kind: "replaceProperties", path, properties: props, span: { begin, end: this.position() } };
     }
 
     if (ch === "{") {
       const props = this.parsePropertiesBlock();
-      return { kind: "updateProperties", path, properties: props };
+      return { kind: "updateProperties", path, properties: props, span: { begin, end: this.position() } };
     }
 
-    return { kind: "define", path, deleted: false };
+    return { kind: "define", path, deleted: false, span: { begin, end: this.position() } };
   }
 
   // ── Property Name (dotted path) ─────────────────────────────────
@@ -862,25 +865,26 @@ class Parser {
 
   private parseArrayElement(): ArrayElement {
     this.skipWs();
+    const begin = this.position();
     const ch = this.peekChar();
 
     if (ch === "{") {
       const props = this.parsePropertiesBlock();
-      return { value: null, properties: props };
+      return { value: null, properties: props, span: { begin, end: this.position() } };
     }
 
     if (ch === "[") {
       const elements = this.parseArray();
-      return { value: { kind: "array", elements }, properties: null };
+      return { value: { kind: "array", elements }, properties: null, span: { begin, end: this.position() } };
     }
 
     const value = this.parseEqValue(false);
     this.skipWs();
     if (this.peekChar() === "{") {
       const props = this.parsePropertiesBlock();
-      return { value, properties: props };
+      return { value, properties: props, span: { begin, end: this.position() } };
     }
-    return { value, properties: null };
+    return { value, properties: null, span: { begin, end: this.position() } };
   }
 
   // ── Properties Block ────────────────────────────────────────────

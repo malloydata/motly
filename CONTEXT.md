@@ -17,10 +17,10 @@ Both the Rust library and the TS parser expose an identical `MOTLYSession` API. 
 
 ```
 src/
-  ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment
-  parser.rs        — Recursive descent parser, produces Vec<Statement>
-  interpreter.rs   — Executes statements against a MOTLYValue tree (mutates in place)
-  tree.rs          — Output types: MOTLYNode, MOTLYPropertyValue, Scalar, EqValue
+  ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment, Span
+  parser.rs        — Recursive descent parser, produces Vec<Statement> with source spans
+  interpreter.rs   — Executes statements against a MOTLYNode tree (mutates in place), sets source locations
+  tree.rs          — Output types: MOTLYNode, MOTLYPropertyValue, Scalar, EqValue, MOTLYLocation
   validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
   json.rs          — JSON serialization (compact, pretty, wire format with $date)
@@ -32,7 +32,7 @@ src/
 bindings/typescript/
   interface/           — "motly-ts-interface" package (shared types, private)
     src/
-      types.ts         — TypeScript types (MOTLYNode, MOTLYPropertyValue, MOTLYRef, etc.)
+      types.ts         — TypeScript types (MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYLocation, MOTLYParseResult, etc.)
 
   parser/              — "@malloydata/motly-ts-parser" npm package (pure TypeScript)
     src/
@@ -91,18 +91,32 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
 ### Key types
 
 **AST** (intermediate, not exposed):
-- `Statement` — enum: `SetEq`, `AssignBoth`, `ReplaceProperties`, `UpdateProperties`, `Define`, `ClearAll`
+- `Statement` — enum: `SetEq`, `AssignBoth`, `ReplaceProperties`, `UpdateProperties`, `Define`, `ClearAll`. Each variant carries a `Span` (begin/end source positions)
 - `ScalarValue` — enum: `String`, `Number`, `Boolean`, `Date`, `Reference`, `None`, `Env`
 - `TagValue` — scalar or array
-- `ArrayElement` — value + optional properties
+- `ArrayElement` — value + optional properties + `Span`
 
 **Output tree** (public API):
-- `MOTLYNode` — has optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYPropertyValue`), optional `deleted` flag
+- `MOTLYNode` — has optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYPropertyValue`), optional `deleted` flag, optional `location` (source location from first appearance)
 - `MOTLYPropertyValue` — either a `MOTLYNode` or a structured link reference (`MOTLYPropertyValue::Ref { link_to: Vec<RefSegment>, link_ups: usize }` in Rust, `{ linkTo: MOTLYRefSegment[], linkUps: number }` in TS)
 - Link references (`$ref`) are a `MOTLYPropertyValue` variant — they replace the entire node (no own eq or properties). `link_to` holds parsed path segments (names and indices), `link_ups` holds the number of `^` levels for relative refs (0 for absolute)
 - Environment refs (`@env.NAME`) live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS) — they are values, so a node can have an env ref AND properties
 
 The interpreter mutates the `MOTLYNode` tree in place (does not return a new value).
+
+### Source location tracking
+
+Every `MOTLYNode` carries an optional `location: MOTLYLocation` recording where it was first defined. A location contains:
+- `parseId` — which `parse()`/`parseSchema()` call produced this node (0-based, auto-incrementing per session)
+- `begin` / `end` — `{ line, column, offset }` positions within that parse call's source text
+
+**Semantics:**
+- **First-appearance rule**: location is set when a node is first created and is NOT updated by subsequent modifications (value changes, property merges, etc.)
+- **Exception — `:=` (assignBoth)**: since `:=` fully replaces a node, it always sets a new location
+- **Exception — deletion (`-name`)**: always creates a fresh deleted node with a new location
+- The `parseId` lets callers (e.g., Malloy) map MOTLY-relative positions back to their own source files
+
+Schema validation errors and reference validation errors include the offending node's `location` when available.
 
 ### Property key ordering
 
@@ -137,17 +151,19 @@ Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-sche
 
 ```typescript
 class MOTLYSession {
-  parse(source: string): MOTLYError[];           // parse + apply to value
-  parseSchema(source: string): MOTLYError[];     // parse as schema
-  reset(): void;                                  // clear value, keep schema
-  getValue(): MOTLYNode;                          // deep clone of current value
-  validateSchema(): MOTLYSchemaError[];           // validate value against schema
-  validateReferences(): MOTLYValidationError[];   // check all $-references resolve
+  parse(source: string): MOTLYParseResult;        // parse + apply to value, returns { parseId, errors }
+  parseSchema(source: string): MOTLYParseResult;  // parse as schema, returns { parseId, errors }
+  reset(): void;                                   // clear value, keep schema (parseId counter continues)
+  getValue(): MOTLYNode;                           // deep clone of current value (includes locations)
+  validateSchema(): MOTLYSchemaError[];            // validate value against schema
+  validateReferences(): MOTLYValidationError[];    // check all $-references resolve
   resolve(options?: { env?: Record<string, string | undefined> }): unknown;
-                                                  // resolve tree to plain JS (TS only)
-  dispose(): void;                                // free resources / mark dead
+                                                   // resolve tree to plain JS (TS only)
+  dispose(): void;                                 // free resources / mark dead
 }
 ```
+
+**Breaking change**: `parse()` and `parseSchema()` now return `MOTLYParseResult` (`{ parseId: number, errors: MOTLYError[] }`) instead of `MOTLYError[]`. Callers must destructure: `const { parseId, errors } = session.parse(source)`.
 
 After `dispose()`, all methods throw. `dispose()` itself is idempotent.
 
@@ -198,8 +214,9 @@ When `input` is a `string[]`, each element is a separate `parse()` call (tests a
 
 ### Test comparison strategy
 
-- **Value comparison**: Custom `deepEqual` that handles `Date` objects and compares object keys order-independently (sorts keys before comparing).
+- **Value comparison**: Custom `deepEqual` that handles `Date` objects and compares object keys order-independently (sorts keys before comparing). The `location` field is excluded from fixture comparisons (TS `deepEqual` filters it out; Rust `strip_locations()` removes it before comparing).
 - **Error list comparison**: Schema and refs fixture runners sort both actual and expected errors by `(code, path)` before comparing, so error emission order doesn't matter. This is consistent across both implementations.
+- **Location tests**: Dedicated `describe("Location tracking")` suite (TS) and `test_loc_*` tests (Rust) verify location semantics separately from fixtures: first-appearance rule, `:=` override, deletion, intermediate path nodes, multi-parse IDs, clone independence, etc.
 
 ## Release Process
 

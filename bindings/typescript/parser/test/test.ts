@@ -52,7 +52,8 @@ function deepEqual(actual: any, expected: any): void {
   if (typeof expected === "object" && expected !== null) {
     assert.ok(typeof actual === "object" && actual !== null, `Expected object, got ${typeof actual}`);
     const expectedKeys = Object.keys(expected).sort();
-    const actualKeys = Object.keys(actual).sort();
+    // Exclude 'location' from actual keys since fixtures don't include it
+    const actualKeys = Object.keys(actual).filter(k => k !== "location").sort();
     assert.deepStrictEqual(actualKeys, expectedKeys, `Key mismatch: ${JSON.stringify(actualKeys)} vs ${JSON.stringify(expectedKeys)}`);
     for (const key of expectedKeys) {
       deepEqual(actual[key], expected[key]);
@@ -91,13 +92,13 @@ describe("Parse fixtures", () => {
 
       if (Array.isArray(fixture.input)) {
         for (const chunk of fixture.input) {
-          const errors = s.parse(chunk);
+          const { errors } = s.parse(chunk);
           if (!fixture.expectErrors) {
             assert.deepStrictEqual(errors, [], `Unexpected parse errors: ${JSON.stringify(errors)}`);
           }
         }
       } else {
-        const errors = s.parse(fixture.input);
+        const { errors } = s.parse(fixture.input);
         if (fixture.expectErrors) {
           assert.ok(errors.length > 0, "Expected parse errors");
           if (fixture.expected === undefined) {
@@ -135,7 +136,7 @@ describe("Parse error fixtures", () => {
   for (const fixture of parseErrorFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
-      const errors = s.parse(fixture.input);
+      const { errors } = s.parse(fixture.input);
       assert.ok(errors.length > 0, `Expected parse errors for: ${fixture.input}`);
       assert.ok(errors[0].code.length > 0);
       assert.ok(errors[0].message.length > 0);
@@ -159,9 +160,9 @@ describe("Schema fixtures", () => {
   for (const fixture of schemaFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
-      const schemaErrors = s.parseSchema(fixture.schema);
+      const { errors: schemaErrors } = s.parseSchema(fixture.schema);
       assert.deepStrictEqual(schemaErrors, [], `Schema parse errors: ${JSON.stringify(schemaErrors)}`);
-      const parseErrors = s.parse(fixture.input);
+      const { errors: parseErrors } = s.parse(fixture.input);
       assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
       const errors = s.validateSchema();
 
@@ -202,7 +203,7 @@ describe("Reference fixtures", () => {
   for (const fixture of refFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
-      const parseErrors = s.parse(fixture.input);
+      const { errors: parseErrors } = s.parse(fixture.input);
       assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
       const errors = s.validateReferences();
 
@@ -252,7 +253,7 @@ describe("Session fixtures", () => {
       for (const step of fixture.steps) {
         switch (step.action) {
           case "parse": {
-            const errors = s.parse(step.input!);
+            const { errors } = s.parse(step.input!);
             if (step.expectErrors) {
               assert.ok(errors.length > 0, "Expected parse errors");
             } else {
@@ -261,7 +262,7 @@ describe("Session fixtures", () => {
             break;
           }
           case "parseSchema": {
-            const errors = s.parseSchema(step.input!);
+            const { errors } = s.parseSchema(step.input!);
             assert.deepStrictEqual(errors, []);
             break;
           }
@@ -323,5 +324,210 @@ describe("MOTLYSession lifecycle", () => {
     const s = new MOTLYSession();
     s.dispose();
     s.dispose(); // should not throw
+  });
+});
+
+// ── Location tracking tests ─────────────────────────────────────
+
+function loc(node: any) {
+  return node?.location;
+}
+
+function propLoc(node: any, ...path: string[]) {
+  let cur = node;
+  for (const key of path) {
+    cur = cur?.properties?.[key];
+  }
+  return loc(cur);
+}
+
+describe("Location tracking", () => {
+  it("parse returns incrementing parseIds", () => {
+    const s = new MOTLYSession();
+    const r0 = s.parse("a = 1");
+    const r1 = s.parse("b = 2");
+    const r2 = s.parseSchema("x = string");
+    assert.equal(r0.parseId, 0);
+    assert.equal(r1.parseId, 1);
+    assert.equal(r2.parseId, 2);
+    s.dispose();
+  });
+
+  it("simple node gets location with correct parseId", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.ok(l, "expected location on node a");
+    assert.equal(l.parseId, 0);
+    assert.equal(l.begin.line, 0);
+    assert.equal(l.begin.column, 0);
+    s.dispose();
+  });
+
+  it("multiple nodes each get their own location", () => {
+    const s = new MOTLYSession();
+    //         0123456789
+    s.parse("a = 1\nb = 2");
+    const v = s.getValue();
+    const la = propLoc(v, "a");
+    const lb = propLoc(v, "b");
+    assert.equal(la.begin.line, 0);
+    assert.equal(la.begin.column, 0);
+    assert.equal(lb.begin.line, 1);
+    assert.equal(lb.begin.column, 0);
+    s.dispose();
+  });
+
+  it("first-appearance rule: setEq does not change location", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    s.parse("a = 2");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 0, "location should be from first parse");
+    assert.equal((v.properties!.a as any).eq, 2, "value should be updated");
+    s.dispose();
+  });
+
+  it("first-appearance rule: updateProperties does not change location", () => {
+    const s = new MOTLYSession();
+    s.parse("a { b = 1 }");
+    s.parse("a { c = 2 }");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 0, "location should be from first parse");
+    s.dispose();
+  });
+
+  it("first-appearance rule: replaceProperties preserves location", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    s.parse("a: { b = 2 }");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 0, "location should be from first parse");
+    s.dispose();
+  });
+
+  it(":= (assignBoth) replaces location", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    s.parse("a := 2");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 1, "location should be from second parse");
+    s.dispose();
+  });
+
+  it(":= with clone replaces location", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1 { x = 10 }");
+    s.parse("b := $a");
+    const v = s.getValue();
+    const la = propLoc(v, "a");
+    const lb = propLoc(v, "b");
+    assert.equal(la.parseId, 0);
+    assert.equal(lb.parseId, 1, "cloned node should have new location");
+    s.dispose();
+  });
+
+  it("nested properties get their own locations", () => {
+    const s = new MOTLYSession();
+    s.parse("a { b = 1\n  c = 2 }");
+    const v = s.getValue();
+    const la = propLoc(v, "a");
+    const lb = propLoc(v, "a", "b");
+    const lc = propLoc(v, "a", "c");
+    assert.ok(la, "a should have location");
+    assert.ok(lb, "b should have location");
+    assert.ok(lc, "c should have location");
+    // b and c are inside the block, so they start on different lines/columns than a
+    assert.notDeepStrictEqual(lb, lc, "b and c should have different locations");
+    s.dispose();
+  });
+
+  it("intermediate path nodes get locations", () => {
+    const s = new MOTLYSession();
+    s.parse("a.b.c = 1");
+    const v = s.getValue();
+    const la = propLoc(v, "a");
+    const lb = propLoc(v, "a", "b");
+    const lc = propLoc(v, "a", "b", "c");
+    assert.ok(la, "a should have location");
+    assert.ok(lb, "b should have location");
+    assert.ok(lc, "c should have location");
+    assert.equal(la.parseId, 0);
+    assert.equal(lb.parseId, 0);
+    assert.equal(lc.parseId, 0);
+    s.dispose();
+  });
+
+  it("deletion sets location", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    s.parse("-a");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 1, "deleted node should have new location");
+    assert.equal((v.properties!.a as any).deleted, true);
+    s.dispose();
+  });
+
+  it("multi-file parse: locations track back to their parse call", () => {
+    const s = new MOTLYSession();
+    const r0 = s.parse("a = 1");
+    const r1 = s.parse("b = 2");
+    const r2 = s.parse("c = 3");
+    const v = s.getValue();
+    assert.equal(propLoc(v, "a").parseId, r0.parseId);
+    assert.equal(propLoc(v, "b").parseId, r1.parseId);
+    assert.equal(propLoc(v, "c").parseId, r2.parseId);
+    s.dispose();
+  });
+
+  it("location spans cover the full statement", () => {
+    const s = new MOTLYSession();
+    //  "a = 100" is 7 chars
+    s.parse("a = 100");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.begin.offset, 0);
+    assert.ok(l.end.offset >= 7, `end offset should be >= 7, got ${l.end.offset}`);
+    s.dispose();
+  });
+
+  it("location preserved through getValue clone", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    const v1 = s.getValue();
+    const v2 = s.getValue();
+    assert.deepStrictEqual(propLoc(v1, "a"), propLoc(v2, "a"));
+    // Mutating one clone should not affect the other
+    (v1.properties!.a as any).location = undefined;
+    assert.ok(propLoc(v2, "a"), "clone should be independent");
+    s.dispose();
+  });
+
+  it("define (bare mention) sets location on first appearance only", () => {
+    const s = new MOTLYSession();
+    s.parse("a");
+    s.parse("a = 1");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    assert.equal(l.parseId, 0, "bare define should set location");
+    s.dispose();
+  });
+
+  it("reset clears locations", () => {
+    const s = new MOTLYSession();
+    s.parse("a = 1");
+    s.reset();
+    s.parse("a = 2");
+    const v = s.getValue();
+    const l = propLoc(v, "a");
+    // After reset, parseId continues incrementing but the node is fresh
+    assert.equal(l.parseId, 1, "after reset, location should be from second parse");
+    s.dispose();
   });
 });

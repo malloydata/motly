@@ -1,3 +1,9 @@
+/** A source span (begin..end) within a single parse() call. */
+export interface Span {
+  begin: { line: number; column: number; offset: number };
+  end: { line: number; column: number; offset: number };
+}
+
 /** A scalar or reference value. */
 export type ScalarValue =
   | { kind: "string"; value: string }
@@ -22,6 +28,7 @@ export type TagValue =
 export interface ArrayElement {
   value: TagValue | null;
   properties: Statement[] | null;
+  span: Span;
 }
 
 /** A parsed statement (the IR between the parser and interpreter). */
@@ -31,26 +38,31 @@ export type Statement =
       path: string[];
       value: TagValue;
       properties: Statement[] | null;
+      span: Span;
     }
   | {
       kind: "assignBoth";
       path: string[];
       value: TagValue;
       properties: Statement[] | null;
+      span: Span;
     }
   | {
       kind: "replaceProperties";
       path: string[];
       properties: Statement[];
+      span: Span;
     }
   | {
       kind: "updateProperties";
       path: string[];
       properties: Statement[];
+      span: Span;
     }
   | {
       kind: "define";
       path: string[];
       deleted: boolean;
+      span: Span;
     }
-  | { kind: "clearAll" };
+  | { kind: "clearAll"; span: Span };

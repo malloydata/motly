@@ -17,7 +17,7 @@ import { MOTLYSession } from "@malloydata/motly-ts-parser";
 
 const session = new MOTLYSession();
 
-const errors = session.parse(`
+const { errors } = session.parse(`
   server = webhost {
     host = localhost
     port = 8080
@@ -88,8 +88,8 @@ See the [full language reference](https://github.com/malloydata/motly/blob/main/
 
 ```typescript
 class MOTLYSession {
-  parse(source: string): MOTLYError[];
-  parseSchema(source: string): MOTLYError[];
+  parse(source: string): MOTLYParseResult;
+  parseSchema(source: string): MOTLYParseResult;
   getValue(): MOTLYNode;
   reset(): void;
   validateSchema(): MOTLYSchemaError[];
@@ -100,8 +100,8 @@ class MOTLYSession {
 
 | Method | Description |
 |--------|-------------|
-| `parse(source)` | Parse MOTLY source and apply it to the session value. Returns parse errors. Successive calls accumulate into the same value tree. |
-| `parseSchema(source)` | Parse MOTLY source as a schema (replaces any previous schema). |
+| `parse(source)` | Parse MOTLY source and apply it to the session value. Returns `{ parseId, errors }`. Successive calls accumulate into the same value tree; each call gets an incrementing `parseId` for mapping locations back to sources. |
+| `parseSchema(source)` | Parse MOTLY source as a schema (replaces any previous schema). Returns `{ parseId, errors }`. |
 | `getValue()` | Return a deep clone of the current value tree. |
 | `reset()` | Clear the value tree (schema is kept). |
 | `validateSchema()` | Validate the current value against the stored schema. Returns `[]` if no schema is set. |
@@ -116,19 +116,29 @@ interface MOTLYNode {
   eq?: MOTLYValue;
   properties?: Record<string, MOTLYPropertyValue>;
   deleted?: boolean;
+  location?: MOTLYLocation;     // source location of first appearance
 }
 
 type MOTLYScalar        = string | number | boolean | Date;
 type MOTLYValue         = MOTLYScalar | MOTLYEnvRef | MOTLYPropertyValue[];
 type MOTLYPropertyValue = MOTLYNode | MOTLYRef;
 
-interface MOTLYRef    { linkTo: string }   // $-reference (structural link)
-interface MOTLYEnvRef { env: string }       // @env.NAME (value from environment)
+interface MOTLYRef    { linkTo: MOTLYRefSegment[]; linkUps: number }
+interface MOTLYEnvRef { env: string }
+
+// Locations
+interface MOTLYLocation {
+  parseId: number;              // which parse() call (0-based, auto-incrementing)
+  begin: { line: number; column: number; offset: number };
+  end:   { line: number; column: number; offset: number };
+}
+
+interface MOTLYParseResult { parseId: number; errors: MOTLYError[] }
 
 // Errors
 interface MOTLYError           { code: string; message: string; begin: Position; end: Position }
-interface MOTLYSchemaError     { code: string; message: string; path: string[] }
-interface MOTLYValidationError { code: string; message: string; path: string[] }
+interface MOTLYSchemaError     { code: string; message: string; path: string[]; location?: MOTLYLocation }
+interface MOTLYValidationError { code: string; message: string; path: string[]; location?: MOTLYLocation }
 ```
 
 ### Type guards

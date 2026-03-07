@@ -74,6 +74,20 @@ impl JsonWriter {
             self.write_properties(props);
         }
 
+        // "location": { ... }
+        if self.wire {
+            if let Some(ref loc) = node.location {
+                self.entry_sep(&mut first);
+                self.write_key("location");
+                write!(
+                    &mut self.buf,
+                    "{{\"parseId\":{},\"begin\":{{\"line\":{},\"column\":{},\"offset\":{}}},\"end\":{{\"line\":{},\"column\":{},\"offset\":{}}}}}",
+                    loc.parse_id, loc.begin.line, loc.begin.column, loc.begin.offset,
+                    loc.end.line, loc.end.column, loc.end.offset
+                ).unwrap();
+            }
+        }
+
         self.depth -= 1;
         self.newline();
         self.buf.push('}');
@@ -267,6 +281,15 @@ pub fn to_wire(node: &MOTLYNode) -> String {
     w.wire = true;
     w.write_node(node);
     w.buf
+}
+
+/// Serialize a parse result (parseId + errors) to a JSON object string.
+pub fn parse_result_to_json(parse_id: u32, errors: &[MOTLYError]) -> String {
+    let mut buf = String::new();
+    write!(&mut buf, "{{\"parseId\":{},\"errors\":", parse_id).unwrap();
+    buf.push_str(&errors_to_json(errors));
+    buf.push('}');
+    buf
 }
 
 /// Serialize a list of parse errors to a JSON array string.

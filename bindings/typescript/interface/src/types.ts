@@ -1,3 +1,21 @@
+/** A source location attached to a node, relative to a specific parse() call. */
+export interface MOTLYLocation {
+  /** Which parse() call produced this node (0-based, auto-incrementing per session). */
+  parseId: number;
+  /** Start of the defining region (0-based line, column, and byte offset). */
+  begin: { line: number; column: number; offset: number };
+  /** End of the defining region (0-based, exclusive). */
+  end: { line: number; column: number; offset: number };
+}
+
+/** The result of a parse() or parseSchema() call. */
+export interface MOTLYParseResult {
+  /** The parse ID assigned to this call (for mapping locations back to sources). */
+  parseId: number;
+  /** Any parse or execution errors encountered. */
+  errors: MOTLYError[];
+}
+
 /** A MOTLY scalar: string, number, boolean, or Date. */
 export type MOTLYScalar = string | number | boolean | Date;
 
@@ -30,6 +48,8 @@ export interface MOTLYNode {
   eq?: MOTLYValue;
   properties?: Record<string, MOTLYPropertyValue>;
   deleted?: boolean;
+  /** Source location of this node's first appearance (set by the interpreter). */
+  location?: MOTLYLocation;
 }
 
 /**
@@ -60,6 +80,8 @@ export interface MOTLYSchemaError {
   message: string;
   /** Path to the offending node (e.g. `["metadata", "name"]`). */
   path: string[];
+  /** Source location of the offending node (if available). */
+  location?: MOTLYLocation;
 }
 
 /** Format a MOTLYRef for display (e.g. `$^^parent.name`). */
@@ -97,4 +119,6 @@ export interface MOTLYValidationError {
   message: string;
   /** Path to the offending reference (e.g. `["spec", "ref"]`). */
   path: string[];
+  /** Source location of the offending reference (if available). */
+  location?: MOTLYLocation;
 }

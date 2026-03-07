@@ -1,6 +1,15 @@
 /// Intermediate representation produced by the parser.
 /// Mirrors the TypeScript `TagStatement` types.
 
+use crate::error::Position;
+
+/// A source span (begin..end) within a single parse() call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub begin: Position,
+    pub end: Position,
+}
+
 /// A scalar or reference value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue {
@@ -39,6 +48,7 @@ pub enum TagValue {
 pub struct ArrayElement {
     pub value: Option<TagValue>,
     pub properties: Option<Vec<Statement>>,
+    pub span: Span,
 }
 
 /// A parsed statement (the IR between the parser and interpreter).
@@ -51,6 +61,7 @@ pub enum Statement {
         value: TagValue,
         /// If present, merge these property statements into existing properties.
         properties: Option<Vec<Statement>>,
+        span: Span,
     },
     /// `name := value` — assign value + clear properties.
     /// `name := value { props }` — assign value + replace properties.
@@ -60,19 +71,26 @@ pub enum Statement {
         value: TagValue,
         /// If present, replace properties with these statements.
         properties: Option<Vec<Statement>>,
+        span: Span,
     },
     /// `name: { properties }` — preserve existing value, replace properties.
     ReplaceProperties {
         path: Vec<String>,
         properties: Vec<Statement>,
+        span: Span,
     },
     /// `name { properties }` (merge semantics)
     UpdateProperties {
         path: Vec<String>,
         properties: Vec<Statement>,
+        span: Span,
     },
     /// `name` or `-name`
-    Define { path: Vec<String>, deleted: bool },
+    Define {
+        path: Vec<String>,
+        deleted: bool,
+        span: Span,
+    },
     /// `-...`
-    ClearAll,
+    ClearAll { span: Span },
 }

@@ -26,6 +26,14 @@ export function cloneNode(value: MOTLYNode): MOTLYNode {
     result.properties = props;
   }
 
+  if (value.location) {
+    result.location = {
+      parseId: value.location.parseId,
+      begin: { ...value.location.begin },
+      end: { ...value.location.end },
+    };
+  }
+
   return result;
 }
 

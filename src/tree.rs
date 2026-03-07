@@ -1,4 +1,16 @@
+use crate::error::Position;
 use std::collections::BTreeMap;
+
+/// A source location attached to a node, relative to a specific parse() call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MOTLYLocation {
+    /// Which parse() call produced this node (0-based, auto-incrementing per session).
+    pub parse_id: u32,
+    /// Start of the defining region.
+    pub begin: Position,
+    /// End of the defining region (exclusive).
+    pub end: Position,
+}
 
 /// A scalar value in the MOTLY tree.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +59,8 @@ pub struct MOTLYNode {
     pub eq: Option<EqValue>,
     pub properties: Option<BTreeMap<String, MOTLYPropertyValue>>,
     pub deleted: bool,
+    /// Source location of this node's first appearance.
+    pub location: Option<MOTLYLocation>,
 }
 
 impl MOTLYNode {
@@ -55,6 +69,7 @@ impl MOTLYNode {
             eq: None,
             properties: None,
             deleted: false,
+            location: None,
         }
     }
 
@@ -63,6 +78,7 @@ impl MOTLYNode {
             eq: Some(eq),
             properties: None,
             deleted: false,
+            location: None,
         }
     }
 
@@ -71,6 +87,7 @@ impl MOTLYNode {
             eq: None,
             properties: None,
             deleted: true,
+            location: None,
         }
     }
 

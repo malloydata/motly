@@ -3,11 +3,25 @@ import {
   MOTLYPropertyValue,
   MOTLYRef,
   MOTLYRefSegment,
+  MOTLYLocation,
   MOTLYSchemaError,
   MOTLYValidationError,
   isRef,
   formatRef,
 } from "../../interface/src/types";
+
+/** Push a schema error, attaching node location if available. */
+function pushSchemaError(
+  errors: MOTLYSchemaError[],
+  code: string,
+  message: string,
+  path: string[],
+  node?: MOTLYNode
+): void {
+  const err: MOTLYSchemaError = { code, message, path };
+  if (node?.location) err.location = node.location;
+  errors.push(err);
+}
 
 // ── Reference Validation ────────────────────────────────────────
 
@@ -40,11 +54,13 @@ function walkRefs(
         // This property is a reference — check it
         const errMsg = checkLink(childPv, ancestors, root);
         if (errMsg !== null) {
-          errors.push({
+          const err: MOTLYValidationError = {
             message: errMsg,
             path: [...path],
             code: "unresolved-reference",
-          });
+          };
+          if (node.location) err.location = node.location;
+          errors.push(err);
         }
       } else {
         // Recurse into child node
@@ -230,11 +246,7 @@ function validateConstraint(
   depth: number
 ): void {
   if (depth > MAX_VALIDATION_DEPTH) {
-    errors.push({
-      message: "Maximum validation depth exceeded (possible recursive type cycle)",
-      path: [...path],
-      code: "invalid-schema",
-    });
+    pushSchemaError(errors, "invalid-schema", "Maximum validation depth exceeded (possible recursive type cycle)", [...path], target);
     return;
   }
 
@@ -272,62 +284,54 @@ function validateValue(
   switch (valueType) {
     case "string":
       if (typeof eq !== "string") {
-        errors.push({ message: `Expected string, got ${describeValue(eq)}`, path: [...path], code: "wrong-type" });
+        pushSchemaError(errors, "wrong-type", `Expected string, got ${describeValue(eq)}`, [...path], target);
         return;
       }
-      validateStringRefinements(eq, valueNode, path, errors);
+      validateStringRefinements(eq, valueNode, path, errors, target);
       break;
 
     case "number":
       if (typeof eq !== "number") {
-        errors.push({ message: `Expected number, got ${describeValue(eq)}`, path: [...path], code: "wrong-type" });
+        pushSchemaError(errors, "wrong-type", `Expected number, got ${describeValue(eq)}`, [...path], target);
         return;
       }
-      validateNumberRefinements(eq, valueNode, path, errors);
+      validateNumberRefinements(eq, valueNode, path, errors, target);
       break;
 
     case "integer":
       if (typeof eq !== "number" || !Number.isInteger(eq)) {
-        errors.push({ message: `Expected integer, got ${describeValue(eq)}`, path: [...path], code: "wrong-type" });
+        pushSchemaError(errors, "wrong-type", `Expected integer, got ${describeValue(eq)}`, [...path], target);
         return;
       }
-      validateNumberRefinements(eq, valueNode, path, errors);
+      validateNumberRefinements(eq, valueNode, path, errors, target);
       break;
 
     case "boolean":
       if (typeof eq !== "boolean") {
-        errors.push({ message: `Expected boolean, got ${describeValue(eq)}`, path: [...path], code: "wrong-type" });
+        pushSchemaError(errors, "wrong-type", `Expected boolean, got ${describeValue(eq)}`, [...path], target);
         return;
       }
-      validateEnumRefinement(eq, valueNode, path, errors);
+      validateEnumRefinement(eq, valueNode, path, errors, target);
       break;
 
     case "date":
       if (!(eq instanceof Date)) {
-        errors.push({ message: `Expected date, got ${describeValue(eq)}`, path: [...path], code: "wrong-type" });
+        pushSchemaError(errors, "wrong-type", `Expected date, got ${describeValue(eq)}`, [...path], target);
         return;
       }
-      validateEnumRefinement(eq, valueNode, path, errors);
+      validateEnumRefinement(eq, valueNode, path, errors, target);
       break;
 
     default: {
       // User-defined value type — resolve its VALUE constraint
       const typeDef = types[valueType];
       if (!typeDef) {
-        errors.push({
-          message: `Unknown VALUE type "${valueType}"`,
-          path: [...path],
-          code: "invalid-schema",
-        });
+        pushSchemaError(errors, "invalid-schema", `Unknown VALUE type "${valueType}"`, [...path], target);
         return;
       }
       const innerValue = getDirective(typeDef, "VALUE");
       if (!innerValue) {
-        errors.push({
-          message: `Type "${valueType}" cannot be used as a VALUE type (no VALUE constraint)`,
-          path: [...path],
-          code: "invalid-schema",
-        });
+        pushSchemaError(errors, "invalid-schema", `Type "${valueType}" cannot be used as a VALUE type (no VALUE constraint)`, [...path], target);
         return;
       }
       validateValue(target, innerValue, types, path, errors, depth + 1);
@@ -349,46 +353,31 @@ function validateStringRefinements(
   value: string,
   valueNode: MOTLYNode,
   path: string[],
-  errors: MOTLYSchemaError[]
+  errors: MOTLYSchemaError[],
+  target: MOTLYNode
 ): void {
-  validateEnumRefinement(value, valueNode, path, errors);
+  validateEnumRefinement(value, valueNode, path, errors, target);
 
   const matchesNode = getDirective(valueNode, "MATCHES");
   if (matchesNode && typeof matchesNode.eq === "string") {
     try {
       const re = new RegExp(matchesNode.eq);
       if (!re.test(value)) {
-        errors.push({
-          message: `Value "${value}" does not match pattern "${matchesNode.eq}"`,
-          path: [...path],
-          code: "pattern-mismatch",
-        });
+        pushSchemaError(errors, "pattern-mismatch", `Value "${value}" does not match pattern "${matchesNode.eq}"`, [...path], target);
       }
     } catch (e) {
-      errors.push({
-        message: `Invalid regex pattern "${matchesNode.eq}": ${e}`,
-        path: [...path],
-        code: "invalid-schema",
-      });
+      pushSchemaError(errors, "invalid-schema", `Invalid regex pattern "${matchesNode.eq}": ${e}`, [...path], target);
     }
   }
 
   const minLen = getDirective(valueNode, "MIN_LENGTH");
   if (minLen && typeof minLen.eq === "number" && value.length < minLen.eq) {
-    errors.push({
-      message: `String length ${value.length} is less than minimum ${minLen.eq}`,
-      path: [...path],
-      code: "length-violation",
-    });
+    pushSchemaError(errors, "length-violation", `String length ${value.length} is less than minimum ${minLen.eq}`, [...path], target);
   }
 
   const maxLen = getDirective(valueNode, "MAX_LENGTH");
   if (maxLen && typeof maxLen.eq === "number" && value.length > maxLen.eq) {
-    errors.push({
-      message: `String length ${value.length} exceeds maximum ${maxLen.eq}`,
-      path: [...path],
-      code: "length-violation",
-    });
+    pushSchemaError(errors, "length-violation", `String length ${value.length} exceeds maximum ${maxLen.eq}`, [...path], target);
   }
 }
 
@@ -396,26 +385,19 @@ function validateNumberRefinements(
   value: number,
   valueNode: MOTLYNode,
   path: string[],
-  errors: MOTLYSchemaError[]
+  errors: MOTLYSchemaError[],
+  target: MOTLYNode
 ): void {
-  validateEnumRefinement(value, valueNode, path, errors);
+  validateEnumRefinement(value, valueNode, path, errors, target);
 
   const min = getDirective(valueNode, "MIN");
   if (min && typeof min.eq === "number" && value < min.eq) {
-    errors.push({
-      message: `Value ${value} is less than minimum ${min.eq}`,
-      path: [...path],
-      code: "out-of-range",
-    });
+    pushSchemaError(errors, "out-of-range", `Value ${value} is less than minimum ${min.eq}`, [...path], target);
   }
 
   const max = getDirective(valueNode, "MAX");
   if (max && typeof max.eq === "number" && value > max.eq) {
-    errors.push({
-      message: `Value ${value} exceeds maximum ${max.eq}`,
-      path: [...path],
-      code: "out-of-range",
-    });
+    pushSchemaError(errors, "out-of-range", `Value ${value} exceeds maximum ${max.eq}`, [...path], target);
   }
 }
 
@@ -423,7 +405,8 @@ function validateEnumRefinement(
   value: string | number | boolean | Date,
   valueNode: MOTLYNode,
   path: string[],
-  errors: MOTLYSchemaError[]
+  errors: MOTLYSchemaError[],
+  target: MOTLYNode
 ): void {
   const enumNode = getDirective(valueNode, "ENUM");
   if (!enumNode || !Array.isArray(enumNode.eq)) return;
@@ -441,11 +424,7 @@ function validateEnumRefinement(
     const allowed = enumNode.eq
       .filter((a): a is MOTLYNode => !isRef(a))
       .map((a) => String(a.eq));
-    errors.push({
-      message: `Value does not match any allowed enum value. Allowed: [${allowed.join(", ")}]`,
-      path: [...path],
-      code: "invalid-enum-value",
-    });
+    pushSchemaError(errors, "invalid-enum-value", `Value does not match any allowed enum value. Allowed: [${allowed.join(", ")}]`, [...path], target);
   }
 }
 
@@ -500,11 +479,7 @@ function validateProperties(
       const propPath = [...path, key];
       const targetValue = targetProps?.[key];
       if (targetValue === undefined) {
-        errors.push({
-          message: `Missing required property "${key}"`,
-          path: propPath,
-          code: "missing-required",
-        });
+        pushSchemaError(errors, "missing-required", `Missing required property "${key}"`, propPath, target);
       } else {
         validatePropertyValue(targetValue, propDefPv, types, propPath, errors, depth);
       }
@@ -532,13 +507,11 @@ function validateProperties(
       if (knownKeys.has(key)) continue;
       const propPath = [...path, key];
       switch (additional.kind) {
-        case "reject":
-          errors.push({
-            message: `Unknown property "${key}"`,
-            path: propPath,
-            code: "unknown-property",
-          });
+        case "reject": {
+          const unknownNode = isRef(targetProps[key]) ? undefined : targetProps[key] as MOTLYNode;
+          pushSchemaError(errors, "unknown-property", `Unknown property "${key}"`, propPath, unknownNode);
           break;
+        }
         case "accept":
           break;
         case "type":
@@ -553,11 +526,7 @@ function validateProperties(
           break;
         case "inline":
           if (isRef(targetProps[key])) {
-            errors.push({
-              message: "Expected a value but found a link",
-              path: propPath,
-              code: "wrong-type",
-            });
+            pushSchemaError(errors, "wrong-type", "Expected a value but found a link", propPath);
           } else {
             validateConstraint(
               targetProps[key] as MOTLYNode,
@@ -596,11 +565,7 @@ function validatePropertyValue(
   depth: number
 ): void {
   if (isRef(targetPv)) {
-    errors.push({
-      message: "Expected a value but found a link",
-      path: [...path],
-      code: "wrong-type",
-    });
+    pushSchemaError(errors, "wrong-type", "Expected a value but found a link", [...path]);
     return;
   }
 
@@ -632,11 +597,7 @@ function validateAgainstTypeName(
 
   const typeDef = types[typeName];
   if (!typeDef) {
-    errors.push({
-      message: `Unknown type "${typeName}" in schema`,
-      path: [...path],
-      code: "invalid-schema",
-    });
+    pushSchemaError(errors, "invalid-schema", `Unknown type "${typeName}" in schema`, [...path], target);
     return;
   }
 
@@ -658,11 +619,7 @@ function validateArrayType(
   depth: number
 ): void {
   if (!Array.isArray(target.eq)) {
-    errors.push({
-      message: `Expected ${innerType}[], got ${describeValue(target.eq)}`,
-      path: [...path],
-      code: "wrong-type",
-    });
+    pushSchemaError(errors, "wrong-type", `Expected ${innerType}[], got ${describeValue(target.eq)}`, [...path], target);
     return;
   }
 
@@ -670,11 +627,7 @@ function validateArrayType(
     const elemPath = [...path, `[${i}]`];
     const elemPv = target.eq[i];
     if (isRef(elemPv)) {
-      errors.push({
-        message: `Expected ${innerType}, got reference`,
-        path: elemPath,
-        code: "wrong-type",
-      });
+      pushSchemaError(errors, "wrong-type", `Expected ${innerType}, got reference`, elemPath);
     } else {
       validateAgainstTypeName(elemPv, innerType, types, elemPath, errors, depth);
     }
@@ -717,11 +670,7 @@ function validateOneOfArray(
     msg += `. Closest match "${bestBranch}": ${details}`;
   }
 
-  errors.push({
-    message: msg,
-    path: [...path],
-    code: "wrong-type",
-  });
+  pushSchemaError(errors, "wrong-type", msg, [...path], target);
 }
 
 // ── Metadata validation ─────────────────────────────────────────
@@ -768,11 +717,7 @@ function validateExclusiveGroups(
   for (const [group, members] of Object.entries(groups)) {
     const present = members.filter((m) => targetProps[m] !== undefined);
     if (present.length > 1) {
-      errors.push({
-        message: `Properties [${present.join(", ")}] are mutually exclusive (group "${group}")`,
-        path: [...path],
-        code: "exclusive-violation",
-      });
+      pushSchemaError(errors, "exclusive-violation", `Properties [${present.join(", ")}] are mutually exclusive (group "${group}")`, [...path]);
     }
   }
 }
@@ -799,11 +744,7 @@ function validateRequiresDeps(
         const reqName = typeof req.eq === "string" ? req.eq : undefined;
         if (!reqName) continue;
         if (targetProps![reqName] === undefined) {
-          errors.push({
-            message: `Property "${key}" requires "${reqName}" to be present`,
-            path: [...path, key],
-            code: "requires-violation",
-          });
+          pushSchemaError(errors, "requires-violation", `Property "${key}" requires "${reqName}" to be present`, [...path, key]);
         }
       }
     }

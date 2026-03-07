@@ -22,10 +22,10 @@ pub struct MOTLYResult {
 
 /// Parse MOTLY source and execute statements against the given value,
 /// returning the updated value and any errors (parse errors + non-fatal execution errors).
-pub fn parse_motly(input: &str, mut value: MOTLYNode) -> MOTLYResult {
+pub fn parse_motly(input: &str, mut value: MOTLYNode, parse_id: u32) -> MOTLYResult {
     match parser::parse(input) {
         Ok(stmts) => {
-            let exec_errors = interpreter::execute(&stmts, &mut value);
+            let exec_errors = interpreter::execute(&stmts, &mut value, parse_id);
             MOTLYResult {
                 value,
                 errors: exec_errors,
@@ -65,6 +65,7 @@ use std::collections::HashMap;
 struct Session {
     value: MOTLYNode,
     schema: Option<MOTLYNode>,
+    next_parse_id: u32,
 }
 
 // WASM is single-threaded, so thread_local is just a convenient safe wrapper.
@@ -95,6 +96,7 @@ pub extern "C" fn wasm_session_new() -> u32 {
             Session {
                 value: MOTLYNode::new(),
                 schema: None,
+                next_parse_id: 0,
             },
         )
     });
@@ -102,7 +104,7 @@ pub extern "C" fn wasm_session_new() -> u32 {
 }
 
 /// Parse source and apply it to the session's value in place.
-/// Returns a pointer to a null-terminated JSON array of errors.
+/// Returns a pointer to a null-terminated JSON object: `{"parseId":N,"errors":[...]}`.
 #[no_mangle]
 pub unsafe extern "C" fn wasm_session_parse(
     id: u32,
@@ -113,26 +115,29 @@ pub unsafe extern "C" fn wasm_session_parse(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let value = with_sessions(|s| match s.get_mut(&id) {
-        Some(session) => Some(std::mem::replace(&mut session.value, MOTLYNode::new())),
+    let (value, parse_id) = with_sessions(|s| match s.get_mut(&id) {
+        Some(session) => {
+            let pid = session.next_parse_id;
+            session.next_parse_id += 1;
+            Some((std::mem::replace(&mut session.value, MOTLYNode::new()), pid))
+        }
         None => None,
+    })
+    .unwrap_or_else(|| {
+        return (MOTLYNode::new(), 0);
     });
-    let value = match value {
-        Some(v) => v,
-        None => return string_to_c_ptr("[]".to_string()),
-    };
-    let result = parse_motly(input, value);
+    let result = parse_motly(input, value, parse_id);
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.value = result.value;
         }
     });
-    let json_str = json::errors_to_json(&result.errors);
+    let json_str = json::parse_result_to_json(parse_id, &result.errors);
     string_to_c_ptr(json_str)
 }
 
 /// Parse MOTLY source as a schema and store it in the session.
-/// Returns a pointer to a null-terminated JSON array of parse errors.
+/// Returns a pointer to a null-terminated JSON object: `{"parseId":N,"errors":[...]}`.
 #[no_mangle]
 pub unsafe extern "C" fn wasm_session_parse_schema(
     id: u32,
@@ -143,13 +148,21 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let result = parse_motly(input, MOTLYNode::new());
+    let parse_id = with_sessions(|s| match s.get_mut(&id) {
+        Some(session) => {
+            let pid = session.next_parse_id;
+            session.next_parse_id += 1;
+            pid
+        }
+        None => 0,
+    });
+    let result = parse_motly(input, MOTLYNode::new(), parse_id);
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.schema = Some(result.value);
         }
     });
-    let json_str = json::errors_to_json(&result.errors);
+    let json_str = json::parse_result_to_json(parse_id, &result.errors);
     string_to_c_ptr(json_str)
 }
 
@@ -218,6 +231,12 @@ fn string_to_c_ptr(s: String) -> *const u8 {
     // into_boxed_slice guarantees allocation size == bytes.len()
     let boxed = bytes.into_boxed_slice();
     Box::into_raw(boxed) as *mut u8
+}
+
+/// Convenience wrapper for tests: parse_motly with parse_id=0.
+#[cfg(test)]
+fn parse_motly_0(input: &str, value: MOTLYNode) -> MOTLYResult {
+    parse_motly(input, value, 0)
 }
 
 #[cfg(test)]

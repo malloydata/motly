@@ -6,7 +6,7 @@ fn main() {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
 
-    let result = parse_motly(&input, MOTLYNode::new());
+    let result = parse_motly(&input, MOTLYNode::new(), 0);
     if result.errors.is_empty() {
         println!("{}", result.value.to_json_pretty());
         return;

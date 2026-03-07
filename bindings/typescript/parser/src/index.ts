@@ -1,4 +1,6 @@
 export type {
+  MOTLYLocation,
+  MOTLYParseResult,
   MOTLYScalar,
   MOTLYRefSegment,
   MOTLYRef,

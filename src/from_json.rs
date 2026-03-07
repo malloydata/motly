@@ -1,4 +1,6 @@
 use crate::tree::*;
+#[allow(unused_imports)]
+use crate::tree::MOTLYLocation;
 use std::collections::BTreeMap;
 
 /// Deserialize a JSON string into a MOTLYNode.
@@ -235,13 +237,14 @@ impl<'a> JsonParser<'a> {
     }
 
     /// Parse a JSON object that represents a MOTLYNode.
-    /// Nodes have optional "deleted", "eq", and "properties" keys.
+    /// Nodes have optional "deleted", "eq", "properties", and "location" keys.
     fn parse_node(&mut self) -> Result<MOTLYNode, String> {
         self.expect(b'{')?;
 
         let mut eq: Option<EqValue> = None;
         let mut properties: Option<BTreeMap<String, MOTLYPropertyValue>> = None;
         let mut deleted = false;
+        let mut location: Option<MOTLYLocation> = None;
 
         if self.peek() != Some(b'}') {
             loop {
@@ -259,6 +262,9 @@ impl<'a> JsonParser<'a> {
                     }
                     "properties" => {
                         properties = Some(self.parse_properties()?);
+                    }
+                    "location" if self.wire => {
+                        location = Some(self.parse_location()?);
                     }
                     _ => {
                         // Skip unknown keys
@@ -281,7 +287,66 @@ impl<'a> JsonParser<'a> {
             eq,
             properties,
             deleted,
+            location,
         })
+    }
+
+    /// Parse a location object: {"parseId":N,"begin":{...},"end":{...}}
+    fn parse_location(&mut self) -> Result<MOTLYLocation, String> {
+        self.expect(b'{')?;
+        let mut parse_id: u32 = 0;
+        let mut begin = crate::error::Position { line: 0, column: 0, offset: 0 };
+        let mut end = crate::error::Position { line: 0, column: 0, offset: 0 };
+
+        if self.peek() != Some(b'}') {
+            loop {
+                let key = self.parse_string()?;
+                self.expect(b':')?;
+                match key.as_str() {
+                    "parseId" => parse_id = self.parse_usize()? as u32,
+                    "begin" => begin = self.parse_position_obj()?,
+                    "end" => end = self.parse_position_obj()?,
+                    _ => { self.skip_json_value()?; }
+                }
+                self.skip_ws();
+                if self.pos < self.input.len() && self.input[self.pos] == b',' {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(b'}')?;
+        Ok(MOTLYLocation { parse_id, begin, end })
+    }
+
+    /// Parse a position object: {"line":N,"column":N,"offset":N}
+    fn parse_position_obj(&mut self) -> Result<crate::error::Position, String> {
+        self.expect(b'{')?;
+        let mut line: usize = 0;
+        let mut column: usize = 0;
+        let mut offset: usize = 0;
+
+        if self.peek() != Some(b'}') {
+            loop {
+                let key = self.parse_string()?;
+                self.expect(b':')?;
+                match key.as_str() {
+                    "line" => line = self.parse_usize()?,
+                    "column" => column = self.parse_usize()?,
+                    "offset" => offset = self.parse_usize()?,
+                    _ => { self.skip_json_value()?; }
+                }
+                self.skip_ws();
+                if self.pos < self.input.len() && self.input[self.pos] == b',' {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(b'}')?;
+        Ok(crate::error::Position { line, column, offset })
     }
 
     /// Parse a property value: either a node or a link reference.

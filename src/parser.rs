@@ -1,4 +1,5 @@
 use crate::ast::*;
+#[allow(unused_imports)]
 use crate::error::{MOTLYError, Position};
 
 /// Parser state: tracks position in the input string.
@@ -122,10 +123,14 @@ impl<'a> Parser<'a> {
     // ── Statement Dispatch ──────────────────────────────────────────
 
     fn parse_statement(&mut self) -> Result<Statement, MOTLYError> {
+        let begin = self.position();
+
         // -... (clearAll)
         if self.starts_with("-...") {
             self.advance(4);
-            return Ok(Statement::ClearAll);
+            return Ok(Statement::ClearAll {
+                span: Span { begin, end: self.position() },
+            });
         }
 
         // -name (define deleted)
@@ -135,6 +140,7 @@ impl<'a> Parser<'a> {
             return Ok(Statement::Define {
                 path,
                 deleted: true,
+                span: Span { begin, end: self.position() },
             });
         }
 
@@ -162,6 +168,7 @@ impl<'a> Parser<'a> {
                 path,
                 value,
                 properties,
+                span: Span { begin, end: self.position() },
             });
         }
 
@@ -195,6 +202,7 @@ impl<'a> Parser<'a> {
                     path,
                     value,
                     properties,
+                    span: Span { begin, end: self.position() },
                 })
             }
             Some(':') => {
@@ -204,6 +212,7 @@ impl<'a> Parser<'a> {
                 Ok(Statement::ReplaceProperties {
                     path,
                     properties: props,
+                    span: Span { begin, end: self.position() },
                 })
             }
             Some('{') => {
@@ -211,11 +220,13 @@ impl<'a> Parser<'a> {
                 Ok(Statement::UpdateProperties {
                     path,
                     properties: props,
+                    span: Span { begin, end: self.position() },
                 })
             }
             _ => Ok(Statement::Define {
                 path,
                 deleted: false,
+                span: Span { begin, end: self.position() },
             }),
         }
     }
@@ -955,6 +966,7 @@ impl<'a> Parser<'a> {
 
     fn parse_array_element(&mut self) -> Result<ArrayElement, MOTLYError> {
         self.skip_ws();
+        let begin = self.position();
 
         match self.peek_char() {
             Some('{') => {
@@ -962,6 +974,7 @@ impl<'a> Parser<'a> {
                 Ok(ArrayElement {
                     value: None,
                     properties: Some(props),
+                    span: Span { begin, end: self.position() },
                 })
             }
             Some('[') => {
@@ -969,6 +982,7 @@ impl<'a> Parser<'a> {
                 Ok(ArrayElement {
                     value: Some(TagValue::Array(elements)),
                     properties: None,
+                    span: Span { begin, end: self.position() },
                 })
             }
             _ => {
@@ -979,11 +993,13 @@ impl<'a> Parser<'a> {
                     Ok(ArrayElement {
                         value: Some(value),
                         properties: Some(props),
+                        span: Span { begin, end: self.position() },
                     })
                 } else {
                     Ok(ArrayElement {
                         value: Some(value),
                         properties: None,
+                        span: Span { begin, end: self.position() },
                     })
                 }
             }

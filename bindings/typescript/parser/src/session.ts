@@ -1,6 +1,7 @@
 import {
   MOTLYNode,
   MOTLYError,
+  MOTLYParseResult,
   MOTLYSchemaError,
   MOTLYValidationError,
 } from "../../interface/src/types";
@@ -20,19 +21,21 @@ export class MOTLYSession {
   private value: MOTLYNode = {};
   private schema: MOTLYNode | null = null;
   private disposed = false;
+  private nextParseId = 0;
 
   /**
    * Parse MOTLY source and apply it to the session's value in place.
-   * Returns only parse errors.
+   * Returns the assigned parseId and any parse/execution errors.
    */
-  parse(source: string): MOTLYError[] {
+  parse(source: string): MOTLYParseResult {
     this.ensureAlive();
+    const parseId = this.nextParseId++;
     try {
       const stmts = parse(source);
-      const errors = execute(stmts, this.value);
-      return errors;
+      const errors = execute(stmts, this.value, parseId);
+      return { parseId, errors };
     } catch (e) {
-      if (isMotlyError(e)) return [e];
+      if (isMotlyError(e)) return { parseId, errors: [e] };
       throw e;
     }
   }
@@ -41,16 +44,17 @@ export class MOTLYSession {
    * Parse MOTLY source as a schema and store it in the session.
    * The schema is parsed fresh (not merged).
    */
-  parseSchema(source: string): MOTLYError[] {
+  parseSchema(source: string): MOTLYParseResult {
     this.ensureAlive();
+    const parseId = this.nextParseId++;
     try {
       const stmts = parse(source);
       const fresh: MOTLYNode = {};
-      const errors = execute(stmts, fresh);
+      const errors = execute(stmts, fresh, parseId);
       this.schema = fresh;
-      return errors;
+      return { parseId, errors };
     } catch (e) {
-      if (isMotlyError(e)) return [e];
+      if (isMotlyError(e)) return { parseId, errors: [e] };
       throw e;
     }
   }
