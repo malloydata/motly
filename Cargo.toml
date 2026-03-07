@@ -12,7 +12,6 @@ name = "motly"
 path = "src/main.rs"
 
 [dependencies]
-regex = "1"
 
 [dev-dependencies]
 serde_json = "1"

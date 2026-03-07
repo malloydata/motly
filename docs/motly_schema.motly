@@ -1,0 +1,212 @@
+#! schema=motly-schema
+#
+# Meta-schema: the MOTLY schema language describing itself.
+#
+# Every schema file — including this one — is a MOTLY document whose
+# structure conforms to this schema.
+#
+# Pre-loaded types
+# ----------------
+# The validator pre-loads these type definitions before reading the
+# schema file. They are ordinary types, not language keywords:
+#
+#   string  { VALUE = string }
+#   number  { VALUE = number }
+#   integer { VALUE = integer }
+#   boolean { VALUE = boolean }
+#   date    { VALUE = date }
+#   flag    { ADDITIONAL = reject }
+#   tag     { ADDITIONAL = accept }
+#   any     { ADDITIONAL = accept }
+#
+# The five value-slot primitives (string, number, integer, boolean,
+# date) are the only things the validator recognizes natively.
+# Everything else is built on top of them.
+#
+
+TYPES {
+
+  # ================================================================
+  # VALUE refinements — dispatched on the type name in VALUE's value slot
+  #
+  # VALUE only accepts value-slot types (string, number, integer,
+  # boolean, date, or user-defined types that constrain the value).
+  # Whole-node types like flag, tag, any are never used with VALUE —
+  # they are referenced directly as property types.
+  # ================================================================
+
+  StringValueDef {
+    DESCRIPTION = "Value constraint for string targets"
+    VALUE = string { ENUM = [string] }
+    OPTIONAL {
+      `ENUM` = "string[]"
+      `MATCHES` = string
+      `MIN_LENGTH` = integer
+      `MAX_LENGTH` = integer
+    }
+  }
+
+  NumberValueDef {
+    DESCRIPTION = "Value constraint for numeric targets"
+    VALUE = string { ENUM = [number, integer] }
+    OPTIONAL {
+      `ENUM` = "number[]"
+      `MIN` = number
+      `MAX` = number
+    }
+  }
+
+  DateValueDef {
+    DESCRIPTION = "Value constraint for date/timestamp targets"
+    VALUE = string { ENUM = [date] }
+    OPTIONAL {
+      `ENUM` = "date[]"
+    }
+  }
+
+  BooleanValueDef {
+    DESCRIPTION = "Value constraint for boolean targets"
+    VALUE = string { ENUM = [boolean] }
+    OPTIONAL {
+      `ENUM` = "boolean[]"
+    }
+  }
+
+  CustomValueDef {
+    DESCRIPTION = "Value constraint for user-defined value types"
+    VALUE = string
+  }
+
+  ValueDef = [StringValueDef, NumberValueDef, DateValueDef, BooleanValueDef, CustomValueDef]
+
+  # ================================================================
+  # ADDITIONAL — keyword or inline type definition
+  # ================================================================
+
+  AdditionalKeyword {
+    DESCRIPTION = "Keyword controlling unknown property handling"
+    VALUE = string { ENUM = [reject, accept] }
+  }
+
+  LegalAdditional = [PropertyDef, AdditionalKeyword]
+
+  # ================================================================
+  # DEPRECATED — flag (bare presence) or string (with message)
+  # ================================================================
+
+  DeprecatedFlag {
+    DESCRIPTION = "Bare deprecation marker"
+  }
+
+  DeprecatedMessage {
+    DESCRIPTION = "Deprecation with replacement guidance"
+    VALUE = string
+  }
+
+  DeprecatedValue = [DeprecatedFlag, DeprecatedMessage]
+
+  # ================================================================
+  # EXCLUSIVE — single group name or array of group names
+  # ================================================================
+
+  SingleExclusive {
+    VALUE = string
+  }
+
+  MultiExclusive {
+    VALUE = "string[]"
+  }
+
+  ExclusiveValue = [SingleExclusive, MultiExclusive]
+
+  # ================================================================
+  # Property block — container whose children are all PropertyDefs
+  # ================================================================
+
+  PropertyBlock {
+    DESCRIPTION = "A block of property definitions (used by REQUIRED and OPTIONAL)"
+    ADDITIONAL = PropertyDef
+  }
+
+  # ================================================================
+  # PropertyDef — the core recursive unit
+  #
+  # A property definition takes one of two forms:
+  #   1. Type reference:      property = TypeName { metadata... }
+  #   2. Inline constraint:   property { VALUE = ... REQUIRED { ... } ... }
+  # ================================================================
+
+  TypeRefPropertyDef {
+    DESCRIPTION = "A property definition that references a named type"
+    VALUE = string
+    OPTIONAL {
+      `DESCRIPTION` = string
+      `DEPRECATED` = DeprecatedValue
+      `DEFAULT` = any
+      `EXCLUSIVE` = ExclusiveValue
+      `REQUIRES` = "string[]"
+    }
+  }
+
+  InlinePropertyDef {
+    DESCRIPTION = "A property definition with an inline constraint"
+    OPTIONAL {
+      # Structure
+      `VALUE` = ValueDef
+      `REQUIRED` = PropertyBlock
+      `OPTIONAL` = PropertyBlock
+      `ADDITIONAL` = LegalAdditional
+      `ONEOF` = "string[]"
+
+      # Documentation
+      `DESCRIPTION` = string
+      `DEPRECATED` = DeprecatedValue
+
+      # Defaults
+      `DEFAULT` = any
+
+      # Sibling relationships
+      `EXCLUSIVE` = ExclusiveValue
+      `REQUIRES` = "string[]"
+    }
+  }
+
+  PropertyDef = [TypeRefPropertyDef, InlinePropertyDef]
+
+  # ================================================================
+  # TYPES block — entries are PropertyDefs or union shorthands
+  # ================================================================
+
+  UnionShorthand {
+    DESCRIPTION = "Shorthand union: TypeName = [TypeA, TypeB]"
+    VALUE = "string[]"
+  }
+
+  TypesEntry = [PropertyDef, UnionShorthand]
+
+  TypesBlock {
+    DESCRIPTION = "Named type definitions"
+    ADDITIONAL = TypesEntry
+  }
+}
+
+# ================================================================
+# Root — the top-level constraint node for any schema file
+#
+# A schema file is itself a constraint node plus TYPES at root level.
+# ================================================================
+
+OPTIONAL {
+  # Root-only
+  `TYPES` = TypesBlock
+
+  # Structure
+  `VALUE` = ValueDef
+  `REQUIRED` = PropertyBlock
+  `OPTIONAL` = PropertyBlock
+  `ADDITIONAL` = LegalAdditional
+  `ONEOF` = "string[]"
+
+  # Documentation
+  `DESCRIPTION` = string
+}

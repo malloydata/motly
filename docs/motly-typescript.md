@@ -2,7 +2,7 @@
 
 The `@malloydata/motly-ts-parser` package is a pure TypeScript MOTLY parser with zero native dependencies. This document covers the full consumer API.
 
-For the MOTLY language itself, see [language.md](language.md). For schema validation, see [schema.md](schema.md).
+For the MOTLY language itself, see [language.md](language.md). For schema validation, see [schema_spec.md](schema_spec.md).
 
 ## Installation
 

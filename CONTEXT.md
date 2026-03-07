@@ -41,23 +41,23 @@ bindings/typescript/
       ast.ts           — TypeScript port of src/ast.rs
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
-      validate.ts      — TypeScript port of src/validate.rs (~740 lines)
+      validate.ts      — TypeScript port of src/validate.rs (~810 lines)
       resolve.ts       — Tree resolver: follows refs, resolves env, produces plain JS values
     test/test.ts       — fixture-driven tests + hand-written tests
     test/resolve.test.ts — Tests for resolve()
 
 docs/
-  language.md      — Complete MOTLY language reference with EBNF grammar
-  schema.md        — Schema validation reference
+  language.md                — Complete MOTLY language reference with EBNF grammar
+  schema_spec.md               — ALL-CAPS schema language specification (iteration 2)
+  motly_schema.motly         — Self-validating meta-schema in the new format
 
 test-data/
   fixtures/        — Shared JSON test fixtures (both implementations run these)
     parse.json         — 134 entries: parse input → expected value
     parse-errors.json  — 14 entries: parse input → expected errors
-    schema.json        — 70 entries: schema + input → expected validation errors
+    schema.json        — 118 entries: schema + input → expected validation errors
     refs.json          — 15 entries: input → expected reference validation errors
     session.json       — 10 entries: multi-step session operations
-  motly-schema.motly       — MOTLY meta-schema (schema that validates schemas)
   k8s-deployment-schema.motly  — Example: Kubernetes deployment schema
   k8s-deployment-sample.motly  — Example: Kubernetes deployment config
 ```
@@ -110,21 +110,28 @@ Rust uses `BTreeMap` for properties (sorted keys). The pure TS implementation do
 
 ## Schema Validation
 
-Full reference: `docs/schema.md`.
+Full spec: `docs/schema_spec.md`. Self-validating meta-schema: `docs/motly_schema.motly`.
 
-Schemas are themselves MOTLY files with three sections:
-- `Required { name = type }` — properties that must exist
-- `Optional { name = type }` — properties that may exist
-- `Types { TypeName { ... } }` — custom reusable types (root level only)
-- `Additional` / `Additional = allow` / `Additional = TypeName` — controls unknown properties
+The schema language uses ALL-CAPS directives to avoid namespace collisions with user-defined names:
 
-Built-in types: `string`, `number`, `boolean`, `date`, `tag`, `flag`, `any`
+- `REQUIRED { name = type }` — properties that must exist
+- `OPTIONAL { name = type }` — properties that may exist
+- `TYPES { TypeName { ... } }` — custom reusable types (root level only)
+- `ADDITIONAL` / `ADDITIONAL = accept` / `ADDITIONAL = reject` / `ADDITIONAL = TypeName` — controls unknown properties
+- `VALUE = primitive { refinements }` — constrains the value slot (string, number, integer, boolean, date)
+- `ONEOF = [TypeA, TypeB]` — union types
+
+Pre-loaded types: `string`, `number`, `integer`, `boolean`, `date`, `tag`, `flag`, `any`. User types cannot shadow these.
+
+VALUE refinements: `ENUM` (all types), `MATCHES` (string), `MIN`/`MAX` (number, integer), `MIN_LENGTH`/`MAX_LENGTH` (string).
+
+Property metadata: `EXCLUSIVE` (mutual exclusion groups), `REQUIRES` (sibling dependencies), `DEFAULT`, `DEPRECATED`, `DESCRIPTION`.
 
 **IMPORTANT GOTCHA**: Array types MUST be quoted: `items = "string[]"`, `ports = "number[]"`. The brackets `[]` are not valid bare-string characters, so unquoted `string[]` causes a parse error.
 
-Other schema features: enum values (`eq = [red, green, blue]`), pattern matching (`matches = "^regex$"`), union types (`oneOf = [string, number]`), nested schemas, custom type arrays (`"TypeName[]"`), recursive types.
+**Implementation status**: TypeScript validator is complete (118 test fixtures passing). Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
 
-Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`
+Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `out-of-range`, `length-violation`, `exclusive-violation`, `requires-violation`
 
 ## MOTLYSession API
 

@@ -25,7 +25,7 @@
   {
     "name": "reset keeps schema",
     "steps": [
-      {"action": "parseSchema", "input": "Required { name = string }"},
+      {"action": "parseSchema", "input": "REQUIRED { name = string }"},
       {"action": "parse", "input": "name = hello"},
       {"action": "validateSchema", "expectedErrors": []},
       {"action": "reset"},
@@ -46,7 +46,7 @@
   {
     "name": "schema validation missing required after reset",
     "steps": [
-      {"action": "parseSchema", "input": "Required { name = string }"},
+      {"action": "parseSchema", "input": "REQUIRED { name = string }"},
       {"action": "parse", "input": "name = hello"},
       {"action": "validateSchema", "expectedErrors": []},
       {"action": "reset"},

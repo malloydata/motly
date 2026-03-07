@@ -38,8 +38,7 @@ The Mot read API is the foundation for a richer DOM:
 1. `getValue()` survival — keep for plain object snapshots?
 2. Node identity — same object or fresh wrapper on repeated access?
 3. Array mutation — `setEq` with array? `appendToArray`? or just innerMOTLY/parse?
-4. Integer vs float in schemas
-5. Snapshot representation — opaque handle vs serialized string
+4. Snapshot representation — opaque handle vs serialized string
 
 ## Schema Metadata
 
@@ -47,45 +46,47 @@ The Mot read API is the foundation for a richer DOM:
 
 Extend MOTLY schemas to carry UI metadata (labels, placeholders, secret flags, file pickers) for driving dynamic UI generation — for example, connection editor panels.
 
+### Current State
+
+The new ALL-CAPS schema language (see `docs/schema_spec.md`) already provides property-level metadata directives: `DESCRIPTION`, `DEFAULT`, and `DEPRECATED`. The meta-schema (`docs/motly_schema.motly`) self-validates, confirming the design is sound.
+
 ### Key Observations
 
-- **The meta-schema is too loose**: `PropDefFull` and `StructuralType` have bare `Additional`, which accepts any garbage in schema files. Tested: tightening to `Additional = tag` as Optional property self-validates and correctly rejects garbage.
-- **Built-in types ignore properties**: `string` type validator only checks eq value, never looks at properties. So `PropDef.oneOf = [string, PropDefFull]` already allows inline metadata on field definitions for free — no validator changes needed. Adding `string` to `TypeDef.oneOf` would extend this to type aliases.
-- **Can't validate metadata with current schema language**: structural properties on a type spec describe the *data*, not the type. Can't combine "eq must be string" with "these optional metadata properties are allowed". A separate mechanism is needed.
+- **DESCRIPTION already works**: `DESCRIPTION = "Hostname or IP address"` on property definitions provides documentation that tools can surface as tooltips.
+- **DEFAULT already works**: `DEFAULT = 30` on optional properties provides fallback values for the DOM API.
+- **DEPRECATED already works**: bare `DEPRECATED` or `DEPRECATED = "Use X instead"` for migration guidance.
+- **UI-specific metadata (secret, filePicker, label, placeholder) is not yet in the spec.** The question is whether to add more directives, use a `META` section, or put UI hints in property metadata alongside DESCRIPTION.
 
-### Design Direction: `Meta:` Section
+### Design Direction
 
-A `Meta:` section in schemas, parallel to `Types:`, keyed by type names:
+The new schema language's inline metadata on property definitions may be sufficient:
 
 ```motly
-Types: {
-  secretString = string
-  filePath = string
+TYPES {
+  SecretString { VALUE = string }
+  FilePath { VALUE = string }
 }
-Meta: {
-  secretString: { secret }
-  filePath: { filePicker }
-}
-Optional: {
-  databasePath = filePath { label="Database File" placeholder=":memory:" }
-  motherDuckToken = secretString { label="MotherDuck Token" }
+OPTIONAL {
+  databasePath = FilePath { DESCRIPTION = "Database file path" DEFAULT = ":memory:" }
+  motherDuckToken = SecretString { DESCRIPTION = "MotherDuck Token" DEPRECATED }
 }
 ```
 
-Type-level metadata (secret, filePicker) lives in the Meta section. Field-level metadata (label, placeholder) goes inline on field definitions. An extraction API merges both.
+For UI-specific hints (secret flag, file picker), options include:
+1. **New directives**: `SECRET`, `FILE_PICKER` etc. — simple but grows the directive set
+2. **Generic metadata**: A `META` property on definitions that accepts arbitrary tags — flexible but unvalidated
+3. **Application-level types**: Applications define types like `SecretString` and use them as signals — no schema language changes needed
 
 ### Open Questions
 
-- Should Meta contain only type names, or also field names?
-- How should the extraction API merge type meta + field meta?
-- Should the meta-schema be tightened now or later?
-- What about the `Type` property in PropDefFull (defined in meta-schema but unused by validator)?
+- Which approach for UI metadata? Dedicated directives vs generic META vs type-name conventions?
+- Should the extraction API merge type-level and property-level metadata?
+- How does metadata interact with the Mot read API? (e.g., `mot.description("field")`)
 
 ### Implementation (once design settles)
 
-- Changes in both Rust (`src/validate.rs`) and pure TS (`bindings/typescript/parser/src/validate.ts`)
-- Meta-schema update (`test-data/motly-schema.motly`)
-- New metadata extraction API
+- Meta-schema update (`docs/motly_schema.motly`)
+- Metadata extraction API on MOTLYSession or Mot
 - Test fixtures for metadata scenarios
 
 ## WASM Backend
