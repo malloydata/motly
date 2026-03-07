@@ -196,15 +196,17 @@ When `input` is a `string[]`, each element is a separate `parse()` call (tests a
 
 ## Release Process
 
-1. Run `./scripts/release.sh [patch|minor|major]` (default: `patch`)
-   - Bumps version in both `bindings/typescript/parser/package.json` and `Cargo.toml`
-   - Runs all tests (Rust + TS)
-   - Commits, tags (`vX.Y.Z`), pushes to `main` with tags
-   - Creates a GitHub release with auto-generated changelog
-2. Manually trigger the **"Publish to npm"** workflow on GitHub Actions (`workflow_dispatch`)
+1. Make sure all work is committed and pushed on `main`
+2. Run `./scripts/release.sh [patch|minor|major]` (default: `patch`)
+   - Preflight: checks clean tree, on `main`, in sync with remote, no tag collision
+   - Bumps version in `bindings/typescript/parser/package.json` and `Cargo.toml`
+   - Runs all tests (Rust + TS) — auto-reverts version files if tests fail
+   - Commits `vX.Y.Z`, tags, pushes — auto-reverts commit+tag if push fails
+3. Go to GitHub Actions, trigger the **"Publish to npm"** workflow (`workflow_dispatch`)
    - Tests again on CI, then publishes `@malloydata/motly-ts-parser` to npm
+   - npm secrets live on GitHub, not locally
 
-The Rust crate is not published to crates.io (yet).
+The Rust crate is not published to crates.io (yet). Tags are the version history; there are no GitHub Releases.
 
 ## Common Pitfalls
 
