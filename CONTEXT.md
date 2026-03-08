@@ -156,7 +156,7 @@ class MOTLYSession {
   parseSchema(source: string): MOTLYParseResult;  // parse as schema, returns { parseId, errors }
   reset(): void;                                   // clear value, keep schema (parseId counter continues)
   getValue(): MOTLYDataNode;                       // deep clone of current value (includes locations)
-  getMot(options?: GetMotOptions): Mot;            // resolved read-only view of the value tree
+  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M;  // resolved read-only view; factory for custom Mot impls
   validateSchema(): MOTLYSchemaError[];            // validate value against schema
   validateReferences(): MOTLYValidationError[];    // check all $-references resolve
   dispose(): void;                                 // free resources / mark dead

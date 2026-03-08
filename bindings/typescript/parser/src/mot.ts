@@ -8,6 +8,12 @@ import {
 } from "../../interface/src/types";
 
 /**
+ * A path segment for navigating a Mot tree: a property name (string)
+ * or an array index (number).
+ */
+export type MotPath = (string | number)[];
+
+/**
  * A resolved, read-only view of a MOTLY node.
  *
  * Every `Mot` has two independent aspects: a **value** (scalar, array, or
@@ -19,65 +25,141 @@ import {
  * and all accessors return `undefined`. This enables safe chaining:
  *
  * ```ts
- * const port = config.get("server", "port").number; // number | undefined
+ * const port = config.get("server", "port").numeric(); // number | undefined
+ * const port = config.numeric("server", "port");      // equivalent shorthand
  * ```
  */
 export interface Mot {
   /** `true` for any real node (including flags with no value). `false` only for the Undefined Mot. */
   readonly exists: boolean;
 
-  /** The type of the value slot, or `undefined` if the node has no value (flag or Undefined Mot). */
-  readonly valueType: "string" | "number" | "boolean" | "date" | "array" | undefined;
+  /**
+   * The type of the value slot, or `undefined` if the node has no value.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  valueType(...path: MotPath): "string" | "number" | "boolean" | "date" | "array" | undefined;
 
-  /** The string value, or `undefined` if the value is not a string. */
-  readonly text: string | undefined;
-  /** The numeric value, or `undefined` if the value is not a number. */
-  readonly number: number | undefined;
-  /** The boolean value, or `undefined` if the value is not a boolean. */
-  readonly boolean: boolean | undefined;
-  /** The date value, or `undefined` if the value is not a date. */
-  readonly date: Date | undefined;
+  /**
+   * The string value, or `undefined` if the value is not a string.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  text(...path: MotPath): string | undefined;
 
-  /** The array elements as Mots, or `undefined` if the value is not an array. */
-  readonly values: Mot[] | undefined;
-  /** All array elements as strings, or `undefined` if any element is not a string. */
-  readonly texts: string[] | undefined;
-  /** All array elements as numbers, or `undefined` if any element is not a number. */
-  readonly numbers: number[] | undefined;
-  /** All array elements as booleans, or `undefined` if any element is not a boolean. */
-  readonly booleans: boolean[] | undefined;
-  /** All array elements as Dates, or `undefined` if any element is not a date. */
-  readonly dates: Date[] | undefined;
+  /**
+   * The numeric value, or `undefined` if the value is not a number.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  numeric(...path: MotPath): number | undefined;
+
+  /**
+   * The boolean value, or `undefined` if the value is not a boolean.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  boolean(...path: MotPath): boolean | undefined;
+
+  /**
+   * The date value, or `undefined` if the value is not a date.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  date(...path: MotPath): Date | undefined;
+
+  /**
+   * The array elements as Mots, or `undefined` if the value is not an array.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  values(...path: MotPath): Mot[] | undefined;
+
+  /**
+   * All array elements as strings, or `undefined` if any element is not a string.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  texts(...path: MotPath): string[] | undefined;
+
+  /**
+   * All array elements as numbers, or `undefined` if any element is not a number.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  numerics(...path: MotPath): number[] | undefined;
+
+  /**
+   * All array elements as booleans, or `undefined` if any element is not a boolean.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  booleans(...path: MotPath): boolean[] | undefined;
+
+  /**
+   * All array elements as Dates, or `undefined` if any element is not a date.
+   * If path segments are provided, navigates first via {@link get}.
+   */
+  dates(...path: MotPath): Date[] | undefined;
 
   /** The property names. Empty for nodes with no properties and for the Undefined Mot. */
   readonly keys: Iterable<string>;
+
   /** The `[name, Mot]` pairs for all properties. */
   readonly entries: Iterable<[string, Mot]>;
 
   /**
-   * Walk into properties by name. Returns the Mot at the end of the path.
-   * If any step does not exist, returns the Undefined Mot.
+   * Navigate by property names and/or array indices. Returns the Mot at the
+   * end of the path. String segments navigate properties; number segments
+   * index into array values. If any step does not exist, returns the
+   * Undefined Mot.
    *
    * ```ts
    * config.get("server", "port")       // equivalent to
    * config.get("server").get("port")
    * ```
    */
-  get(...props: string[]): Mot;
+  get(...path: MotPath): Mot;
 
   /**
-   * Returns `true` if the full property path exists.
-   * Equivalent to `.get(...props).exists`.
+   * Returns `true` if the full path exists.
+   * Equivalent to `.get(...path).exists`.
    */
-  has(...props: string[]): boolean;
+  has(...path: MotPath): boolean;
 }
 
 /**
- * Options for {@link MOTLYSession.getMot}.
+ * A resolved value in a Mot node. References have been followed, env vars
+ * substituted, and deletions consumed. Used by {@link MotFactory} to
+ * communicate the resolved value to custom Mot implementations.
  */
-export interface GetMotOptions {
+export type MotResolvedValue =
+  | { type: "string"; value: string }
+  | { type: "number"; value: number }
+  | { type: "boolean"; value: boolean }
+  | { type: "date"; value: Date }
+  | { type: "array"; value: Mot[] }
+  | undefined;
+
+/**
+ * Factory for creating Mot instances. Pass via {@link GetMotOptions.factory}
+ * to control what objects {@link buildMot} produces (e.g., Tags with read
+ * tracking).
+ *
+ * The factory's {@link createMot} receives a resolved value and a mutable
+ * properties Map. The Map is empty at creation time and populated afterward —
+ * implementations must read from it lazily (not copy at construction time).
+ *
+ * **Note on array types**: When `M extends Mot`, array elements in
+ * `MotResolvedValue` are typed as `Mot[]` but are `M` instances at runtime.
+ * Factory implementations should cast if needed: `value.value as M[]`.
+ */
+export interface MotFactory<M extends Mot = Mot> {
+  /** Create a resolved Mot from a value and a lazily-populated properties Map. */
+  createMot(value: MotResolvedValue, properties: Map<string, M>): M;
+  /** The singleton representing a missing/nonexistent node. */
+  undefinedMot: M;
+}
+
+/**
+ * Options for {@link buildMot} and {@link MOTLYSession.getMot}.
+ */
+export interface GetMotOptions<M extends Mot = Mot> {
   /** Environment variable map for resolving `@env.NAME` references. */
   env?: Record<string, string | undefined>;
+  /** Factory for creating custom Mot implementations (e.g., Tags with read tracking). */
+  factory?: MotFactory<M>;
 }
 
 const EMPTY_ITER: Iterable<never> = {
@@ -88,121 +170,147 @@ const EMPTY_ITER: Iterable<never> = {
 
 const undefinedMot: Mot = {
   exists: false,
-  valueType: undefined,
-  text: undefined,
-  number: undefined,
-  boolean: undefined,
-  date: undefined,
-  values: undefined,
-  texts: undefined,
-  numbers: undefined,
-  booleans: undefined,
-  dates: undefined,
+  valueType() { return undefined; },
+  text() { return undefined; },
+  numeric() { return undefined; },
+  boolean() { return undefined; },
+  date() { return undefined; },
+  values() { return undefined; },
+  texts() { return undefined; },
+  numerics() { return undefined; },
+  booleans() { return undefined; },
+  dates() { return undefined; },
   keys: EMPTY_ITER as Iterable<string>,
   entries: EMPTY_ITER as Iterable<[string, Mot]>,
-  get() {
-    return undefinedMot;
-  },
-  has() {
-    return false;
-  },
+  get() { return undefinedMot; },
+  has() { return false; },
 };
 
-type ResolvedValue =
-  | { type: "string"; value: string }
-  | { type: "number"; value: number }
-  | { type: "boolean"; value: boolean }
-  | { type: "date"; value: Date }
-  | { type: "array"; value: Mot[] }
-  | undefined;
-
 function makeMot(
-  resolvedValue: ResolvedValue,
+  resolvedValue: MotResolvedValue,
   properties: Map<string, Mot>,
 ): Mot {
   const mot: Mot = {
     exists: true,
-    get valueType() {
+
+    valueType(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).valueType();
       return resolvedValue?.type;
     },
-    get text() {
+
+    text(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).text();
       return resolvedValue?.type === "string" ? resolvedValue.value : undefined;
     },
-    get number() {
+
+    numeric(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).numeric();
       return resolvedValue?.type === "number" ? resolvedValue.value : undefined;
     },
-    get boolean() {
+
+    boolean(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).boolean();
       return resolvedValue?.type === "boolean"
         ? resolvedValue.value
         : undefined;
     },
-    get date() {
+
+    date(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).date();
       return resolvedValue?.type === "date" ? resolvedValue.value : undefined;
     },
-    get values() {
+
+    values(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).values();
       return resolvedValue?.type === "array" ? resolvedValue.value : undefined;
     },
-    // TODO: cache convenience array accessors if perf becomes a concern
-    get texts() {
+
+    texts(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).texts();
       if (resolvedValue?.type !== "array") return undefined;
       const result: string[] = [];
       for (const m of resolvedValue.value) {
-        if (m.text === undefined) return undefined;
-        result.push(m.text);
+        const t = m.text();
+        if (t === undefined) return undefined;
+        result.push(t);
       }
       return result;
     },
-    get numbers() {
+
+    numerics(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).numerics();
       if (resolvedValue?.type !== "array") return undefined;
       const result: number[] = [];
       for (const m of resolvedValue.value) {
-        if (m.number === undefined) return undefined;
-        result.push(m.number);
+        const n = m.numeric();
+        if (n === undefined) return undefined;
+        result.push(n);
       }
       return result;
     },
-    get booleans() {
+
+    booleans(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).booleans();
       if (resolvedValue?.type !== "array") return undefined;
       const result: boolean[] = [];
       for (const m of resolvedValue.value) {
-        if (m.boolean === undefined) return undefined;
-        result.push(m.boolean);
+        const b = m.boolean();
+        if (b === undefined) return undefined;
+        result.push(b);
       }
       return result;
     },
-    get dates() {
+
+    dates(...path: MotPath) {
+      if (path.length > 0) return mot.get(...path).dates();
       if (resolvedValue?.type !== "array") return undefined;
       const result: Date[] = [];
       for (const m of resolvedValue.value) {
-        if (m.date === undefined) return undefined;
-        result.push(m.date);
+        const d = m.date();
+        if (d === undefined) return undefined;
+        result.push(d);
       }
       return result;
     },
+
     get keys() {
       return [...properties.keys()];
     },
+
     get entries() {
       return [...properties.entries()];
     },
-    get(...props: string[]) {
+
+    get(...path: MotPath) {
       let current: Mot = mot;
-      for (const p of props) {
-        if (current === mot) {
-          current = properties.get(p) ?? undefinedMot;
+      for (const seg of path) {
+        if (typeof seg === "number") {
+          const arr = current.values();
+          if (!arr || !Number.isInteger(seg) || seg < 0 || seg >= arr.length) return undefinedMot;
+          current = arr[seg];
         } else {
-          current = current.get(p);
+          if (current === mot) {
+            current = properties.get(seg) ?? undefinedMot;
+          } else {
+            current = current.get(seg);
+          }
         }
         if (!current.exists) return undefinedMot;
       }
       return current;
     },
-    has(...props: string[]) {
-      return mot.get(...props).exists;
+
+    has(...path: MotPath) {
+      return mot.get(...path).exists;
     },
   };
   return mot;
 }
+
+const defaultFactory: MotFactory = {
+  createMot: makeMot,
+  undefinedMot,
+};
 
 // Navigate a ref to its final concrete MOTLYDataNode target.
 // Returns undefined if the ref can't be resolved (missing path, cycle, etc.)
@@ -272,6 +380,8 @@ function navigateRef(
 
 export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
   const env = options?.env;
+  const factory = (options?.factory ?? defaultFactory) as MotFactory;
+  const undef = factory.undefinedMot;
   const cache = new Map<MOTLYDataNode, Mot>();
 
   // ancestors does NOT include `node` — it's the chain above.
@@ -281,14 +391,14 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
     root: MOTLYDataNode,
     ancestors: MOTLYDataNode[],
   ): Mot {
-    if (node.deleted) return undefinedMot;
+    if (node.deleted) return undef;
     if (cache.has(node)) return cache.get(node)!;
 
     const properties = new Map<string, Mot>();
     // For eq resolution, array elements are children of node, so push node
     const resolvedValue = resolveEq(node.eq, root, ancestors, node);
 
-    const mot = makeMot(resolvedValue, properties);
+    const mot = factory.createMot(resolvedValue, properties);
     cache.set(node, mot);
 
     if (node.properties) {
@@ -318,12 +428,12 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
       const visiting = new Set<MOTLYNode>();
       visiting.add(pv);
       const nav = navigateRef(pv, root, ancestors, visiting);
-      if (!nav) return undefinedMot;
-      if (nav.target.deleted) return undefinedMot;
+      if (!nav) return undef;
+      if (nav.target.deleted) return undef;
       return resolveNode(nav.target, root, nav.ancestors);
     }
     const node = pv;
-    if (node.deleted) return undefinedMot;
+    if (node.deleted) return undef;
     // Child nodes get parentNode pushed onto ancestors
     return resolveNode(node, root, [...ancestors, parentNode]);
   }
@@ -333,7 +443,7 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
     root: MOTLYDataNode,
     ancestors: MOTLYDataNode[],
     parentNode: MOTLYDataNode,
-  ): ResolvedValue {
+  ): MotResolvedValue {
     if (eq === undefined) return undefined;
     if (isEnvRef(eq)) {
       const val = env ? env[eq.env] : undefined;

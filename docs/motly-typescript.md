@@ -25,27 +25,31 @@ session.parse(`
 `);
 
 const config = session.getMot();
-const port = config.get("server", "port").number;  // 8080
-const tags = config.get("tags").texts;              // ["web", "api", "production"]
+const port = config.get("server", "port").numeric();  // 8080
+const tags = config.get("tags").texts();              // ["web", "api", "production"]
+
+// Pathed shorthand — equivalent to the above
+const port2 = config.numeric("server", "port");        // 8080
+const tags2 = config.texts("tags");                   // ["web", "api", "production"]
 ```
 
 ## MOTLYSession
 
 A stateful parsing session. Source text is parsed and accumulated into an internal value tree. An optional schema can be loaded for validation. The `Mot` read API provides typed, navigable access to the resolved tree.
 
-### `parse(source: string): MOTLYError[]`
+### `parse(source: string): MOTLYParseResult`
 
 Parse MOTLY source and apply it to the session's value. Multiple calls accumulate — later statements merge with or override earlier ones.
 
-Returns an array of parse errors (empty on success).
+Returns a `MOTLYParseResult` containing the assigned `parseId` and any errors.
 
 ```ts
 const session = new MOTLYSession();
-let errors = session.parse("server { host = localhost }");
-errors = session.parse("server { port = 8080 }");  // merges with existing
+let { errors } = session.parse("server { host = localhost }");
+({ errors } = session.parse("server { port = 8080 }"));  // merges with existing
 ```
 
-### `parseSchema(source: string): MOTLYError[]`
+### `parseSchema(source: string): MOTLYParseResult`
 
 Parse MOTLY source as a schema. Replaces any previously loaded schema. The schema is parsed fresh (not merged with previous schemas).
 
@@ -86,7 +90,7 @@ for (const err of schemaErrors) {
 
 Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`.
 
-### `getMot(options?: GetMotOptions): Mot`
+### `getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M`
 
 Return a resolved `Mot` view of the current value tree. All references followed, environment variables substituted, deletions consumed.
 
@@ -98,9 +102,11 @@ const config = session.getMot({
 
 The `env` option provides values for `@env.NAME` references. Missing env vars produce nodes with no value.
 
+Pass a `MotFactory` via `options.factory` to control what objects are created (e.g., Tags with read tracking). Without a factory, returns plain Mot instances. See [MotFactory](#motfactory) for details.
+
 `getMot()` is forgiving — it always succeeds. Unresolved references produce the Undefined Mot at that position. To detect problems, call `validateReferences()` and `validateSchema()` before `getMot()`.
 
-### `getValue(): MOTLYNode`
+### `getValue(): MOTLYDataNode`
 
 Return a deep clone of the raw, unresolved parse tree. This is the low-level representation with refs, env refs, and deleted nodes still present. Most consumers should use `getMot()` instead.
 
@@ -119,22 +125,28 @@ The `Mot` interface is the consumer-facing read API. Every `Mot` has two indepen
 - A **value** — a scalar (string, number, boolean, date), an array of Mots, or nothing
 - **Properties** — a map of named child Mots
 
+All value accessors are **methods**, not properties. This allows implementations to add side effects (e.g., read tracking) and to accept optional path arguments for shorthand navigation.
+
 ### Navigation
 
-#### `get(...props: string[]): Mot`
+#### `get(...path: MotPath): Mot`
 
-Walk into properties by name. Returns the `Mot` at the end of the path. If any step does not exist, returns the **Undefined Mot** (see below). Never returns `undefined`.
+Navigate by property names and/or array indices. Returns the `Mot` at the end of the path. String segments navigate properties; number segments index into array values. If any step does not exist, returns the **Undefined Mot** (see below). Never returns `undefined`.
 
 ```ts
 config.get("server", "port")         // equivalent to
 config.get("server").get("port")
+
+// Numeric segments index into arrays
+config.get("items", 0, "name")       // first item's name
+config.get("items", 2)               // third array element
 ```
 
-Property navigation only — no numeric indexing. Array elements are accessed through `.values`.
+`MotPath` is `(string | number)[]`. Non-integer numeric indices (e.g., `1.5`, `NaN`) return the Undefined Mot.
 
-#### `has(...props: string[]): boolean`
+#### `has(...path: MotPath): boolean`
 
-Returns `true` if the full property path exists. Equivalent to `.get(...props).exists`.
+Returns `true` if the full path exists. Equivalent to `.get(...path).exists`.
 
 ```ts
 if (config.has("server", "ssl")) {
@@ -148,11 +160,11 @@ if (config.has("server", "ssl")) {
 
 ### Value Type
 
-#### `valueType: "string" | "number" | "boolean" | "date" | "array" | undefined`
+#### `valueType(...path: MotPath): "string" | "number" | "boolean" | "date" | "array" | undefined`
 
-The type of the value slot, or `undefined` if the node has no value. This distinguishes three states:
+The type of the value slot, or `undefined` if the node has no value. If path segments are provided, navigates first via `get()`. This distinguishes three states:
 
-| State | `exists` | `valueType` |
+| State | `exists` | `valueType()` |
 |---|---|---|
 | Flag (node exists, no value) | `true` | `undefined` |
 | Valued node | `true` | `"string"`, `"number"`, etc. |
@@ -160,25 +172,26 @@ The type of the value slot, or `undefined` if the node has no value. This distin
 
 ### Typed Value Accessors
 
-Each returns the value if it matches the requested type, `undefined` otherwise. Accessors never coerce.
+Each returns the value if it matches the requested type, `undefined` otherwise. Accessors never coerce. All accept optional path segments for shorthand navigation.
 
 | Accessor | Returns |
 |---|---|
-| `text` | `string \| undefined` |
-| `number` | `number \| undefined` |
-| `boolean` | `boolean \| undefined` |
-| `date` | `Date \| undefined` |
+| `text(...path)` | `string \| undefined` |
+| `numeric(...path)` | `number \| undefined` |
+| `boolean(...path)` | `boolean \| undefined` |
+| `date(...path)` | `Date \| undefined` |
 
 ```ts
-const port = config.get("server", "port").number;
-if (port !== undefined) {
-  listen(port);
-}
+// Explicit navigation + accessor
+const port = config.get("server", "port").numeric();
+
+// Pathed shorthand — equivalent
+const port = config.numeric("server", "port");
 ```
 
 ### Array Access
 
-#### `values: Mot[] | undefined`
+#### `values(...path: MotPath): Mot[] | undefined`
 
 The array elements as Mots, or `undefined` if the value is not an array. Each element is a full `Mot` with its own value and properties.
 
@@ -190,24 +203,28 @@ items = [
 ```
 
 ```ts
-const items = config.get("items").values;
-const name  = items?.[0]?.text;                 // "widget"
-const color = items?.[0]?.get("color")?.text;   // "red"
+const items = config.get("items").values();
+const name  = items?.[0]?.text();                  // "widget"
+const color = items?.[0]?.get("color")?.text();    // "red"
+
+// Or use numeric path segments
+const name  = config.get("items", 0).text();       // "widget"
+const color = config.text("items", 0, "color");    // "red"
 ```
 
 #### Typed Array Convenience Accessors
 
-Return a typed array if **all** elements match the requested type. If any element doesn't match, the accessor returns `undefined`.
+Return a typed array if **all** elements match the requested type. If any element doesn't match, the accessor returns `undefined`. All accept optional path segments.
 
 | Accessor | Returns |
 |---|---|
-| `texts` | `string[] \| undefined` |
-| `numbers` | `number[] \| undefined` |
-| `booleans` | `boolean[] \| undefined` |
-| `dates` | `Date[] \| undefined` |
+| `texts(...path)` | `string[] \| undefined` |
+| `numerics(...path)` | `number[] \| undefined` |
+| `booleans(...path)` | `boolean[] \| undefined` |
+| `dates(...path)` | `Date[] \| undefined` |
 
 ```ts
-const tags = config.get("tags").texts;  // ["web", "api", "production"]
+const tags = config.texts("tags");  // ["web", "api", "production"]
 ```
 
 ### Property Enumeration
@@ -222,7 +239,7 @@ Property names. Empty for nodes with no properties and for the Undefined Mot.
 
 ```ts
 for (const [key, child] of config.entries) {
-  console.log(key, child.valueType);
+  console.log(key, child.valueType());
 }
 ```
 
@@ -230,20 +247,39 @@ for (const [key, child] of config.entries) {
 
 A special singleton returned by `get()` when any step in the path does not exist. Enables safe deep navigation without null checks.
 
-| Property | Value |
+| Method / Property | Value |
 |---|---|
 | `exists` | `false` |
-| `valueType` | `undefined` |
-| `text`, `number`, `boolean`, `date` | `undefined` |
-| `values`, `texts`, `numbers`, `booleans`, `dates` | `undefined` |
+| `valueType()` | `undefined` |
+| `text()`, `numeric()`, `boolean()`, `date()` | `undefined` |
+| `values()`, `texts()`, `numerics()`, `booleans()`, `dates()` | `undefined` |
 | `keys`, `entries` | empty |
 | `get(...)` | returns itself (propagates) |
 | `has(...)` | `false` |
 
 ```ts
 // If "server" doesn't exist, get("port") returns the Undefined Mot,
-// and .number returns undefined. No ?. needed.
-const port = config.get("server", "port").number;
+// and .numeric() returns undefined. No ?. needed.
+const port = config.get("server", "port").numeric();
+```
+
+## MotFactory
+
+The `MotFactory` interface lets you control what objects `getMot()` creates. This enables custom Mot implementations with additional capabilities (e.g., read tracking, mutation).
+
+```ts
+interface MotFactory<M extends Mot = Mot> {
+  createMot(value: MotResolvedValue, properties: Map<string, M>): M;
+  undefinedMot: M;
+}
+```
+
+The factory's `createMot` receives a resolved value and a mutable properties `Map`. The Map is empty at creation time and populated afterward — implementations must read from it lazily (not copy at construction time).
+
+When `M extends Mot`, array elements in `MotResolvedValue` are typed as `Mot[]` but are `M` instances at runtime. Factory implementations should cast if needed.
+
+```ts
+const mot = session.getMot({ factory: myFactory });
 ```
 
 ## References and Environment Variables
@@ -255,6 +291,17 @@ References and env refs are resolved before the `Mot` is returned. The consumer 
 - **Environment references** are substituted from the `env` map passed to `getMot()`. Missing env vars produce a node with no value (flag).
 
 ## Error Types
+
+### `MOTLYParseResult`
+
+Returned by `parse()` and `parseSchema()`.
+
+```ts
+interface MOTLYParseResult {
+  parseId: number;       // auto-incrementing per session
+  errors: MOTLYError[];
+}
+```
 
 ### `MOTLYError`
 
@@ -346,9 +393,9 @@ if (errors.length > 0) {
 // Read
 const config = session.getMot({ env: process.env });
 
-const dbHost = config.get("database", "host").text;     // from DB_HOST env var
-const dbPort = config.get("database", "port").number;   // 5432
-const dbName = config.get("database", "name").text;     // "myapp"
+const dbHost = config.text("database", "host");     // from DB_HOST env var
+const dbPort = config.numeric("database", "port");   // 5432
+const dbName = config.text("database", "name");     // "myapp"
 
 if (config.has("features", "caching")) {
   enableCaching();

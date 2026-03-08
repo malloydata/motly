@@ -43,7 +43,7 @@ class Mot:
         ...
 
     @property
-    def number(self) -> Optional[float]:
+    def numeric(self) -> Optional[float]:
         ...
 
     @property
@@ -65,7 +65,7 @@ class Mot:
         ...
 
     @property
-    def numbers(self) -> Optional[list[float]]:
+    def numerics(self) -> Optional[list[float]]:
         ...
 
     @property
@@ -116,17 +116,19 @@ class Mot:
 session.parse(source)
 mot = session.get_mot(env={"API_KEY": "secret"})
 
-# Variadic get — translates directly from TypeScript
-port = mot.get("server", "port").number         # float | None
+# Variadic get + accessor
+port = mot.get("server", "port").numeric         # float | None (property style)
 host = mot.get("server", "host").text           # str | None
 
+# Pathed shorthand (if method-style accessors adopted)
+port = mot.numeric("server", "port")             # float | None
+host = mot.text("server", "host")               # str | None
+tags = mot.texts("config", "tags")              # list[str] | None
+
 # Pythonic alternatives via dunders
-port = mot["server"]["port"].number
+port = mot["server"]["port"].numeric
 if "ssl" in mot.get("server"):
     ...
-
-# Array convenience
-tags = mot.get("config", "tags").texts          # list[str] | None
 
 # Enumeration
 for key in mot:
@@ -157,7 +159,7 @@ Adding these makes the API feel native:
 
 ```python
 if "port" in config["server"]:
-    port = config["server"]["port"].number
+    port = config["server"]["port"].numeric
 ```
 
 The question is whether to support BOTH `get()` and `[]` or pick one. Having
@@ -198,21 +200,26 @@ otherwise. This matches how JSON libraries behave in Python and avoids the
 
 ### property vs method for accessors
 
-Using `@property` for `.text`, `.number`, etc. is the right call — these are
-attribute-like reads, not actions. But `.keys` and `.entries` as properties
-returning iterators feels slightly off — Python's `dict.keys()` and
-`dict.items()` are method calls. Consider:
+The TypeScript API now uses **methods** for all value accessors (`text()`,
+`number()`, etc.) rather than getter properties. This was done so that:
+1. Implementations can add side effects (read tracking) transparently
+2. Accessors can accept optional path arguments: `mot.text("server", "host")`
+3. Tag (Malloy's read-tracked wrapper) can implement the Mot interface
+
+For Python, the choice is open. `@property` is more Pythonic for simple reads,
+but methods would match TS and enable pathed accessors:
 
 ```python
-@property
-def keys(self) -> list[str]: ...
+# Property style (Pythonic, but no path shorthand)
+port = config.get("server", "port").numeric
 
-def items(self) -> list[tuple[str, Mot]]: ...   # not "entries"
+# Method style (matches TS, enables shorthand)
+port = config.numeric("server", "port")
 ```
 
-Using `items` instead of `entries` matches Python's dict vocabulary. And
-returning lists (like the TypeScript revision) avoids single-use iterator
-issues.
+`.keys` and `.entries` as properties returning iterators feels slightly off —
+Python's `dict.keys()` and `dict.items()` are method calls. Consider using
+`items` instead of `entries` to match Python's dict vocabulary.
 
 ### Type annotations and mypy
 

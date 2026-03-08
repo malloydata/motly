@@ -21,6 +21,16 @@ provenance for future mutation support.
 `session.getMot({ env })` returns a `Mot`. Replaces the old untyped `resolve()`
 that returned plain JS objects.
 
+Key design decisions:
+- **Value accessors are methods**, not properties: `mot.text()` not `mot.text`. This
+  allows implementations to add side effects (read tracking) and enables optional
+  path arguments for shorthand navigation: `mot.text("server", "host")`.
+- **Path segments** (`MotPath`) are `(string | number)[]`: strings navigate properties,
+  numbers index into array values. `get("items", 0, "name")` works.
+- **Factory pattern**: `getMot({ factory })` accepts a `MotFactory` to control what
+  objects are created. Enables custom Mot implementations (e.g., Malloy's Tags with
+  read tracking and mutation) while reusing the resolution engine.
+
 Cross-language API design notes:
 - **Rust**: [`docs/mot-api-rust.md`](docs/mot-api-rust.md) — `Option<&Mot>` instead of Null Object pattern; `get()` + `get_path()` instead of variadic; arena allocation for circular refs
 - **Python**: [`docs/mot-api-python.md`](docs/mot-api-python.md) — Null Object pattern translates directly; dunder support (`__getitem__`, `__contains__`, `__bool__`) for Pythonic usage

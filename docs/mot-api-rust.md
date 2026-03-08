@@ -56,7 +56,7 @@ impl Mot {
     // --- Typed accessors ---
 
     pub fn text(&self) -> Option<&str>;
-    pub fn number(&self) -> Option<f64>;
+    pub fn numeric(&self) -> Option<f64>;
     pub fn boolean(&self) -> Option<bool>;
     pub fn date(&self) -> Option<DateTime<FixedOffset>>;
 
@@ -64,7 +64,7 @@ impl Mot {
 
     pub fn values(&self) -> Option<&[Mot]>;
     pub fn texts(&self) -> Option<Vec<&str>>;
-    pub fn numbers(&self) -> Option<Vec<f64>>;
+    pub fn numerics(&self) -> Option<Vec<f64>>;
     pub fn booleans(&self) -> Option<Vec<bool>>;
     pub fn dates(&self) -> Option<Vec<DateTime<FixedOffset>>>;
 
@@ -88,12 +88,12 @@ let errors = session.parse(source);
 let mot = session.get_mot(Some(&env));
 
 // Single-step chaining with ?
-let port = mot.get("server")?.get("port")?.number();   // Option<f64>
+let port = mot.get("server")?.get("port")?.numeric();   // Option<f64>
 let host = mot.get("server")?.get("host")?.text();     // Option<&str>
 
 // Multi-step convenience
 let port = mot.get_path(&["server", "port"])
-    .and_then(|m| m.number());                          // Option<f64>
+    .and_then(|m| m.numeric());                          // Option<f64>
 
 // Array convenience
 let tags = mot.get("config")?.get("tags")?.texts();    // Option<Vec<&str>>
@@ -112,7 +112,7 @@ for (key, child) in mot.entries() {
 ### get() returns Option, not a Null Object
 
 The TypeScript API uses an Undefined Mot singleton so `.get()` never returns
-undefined — it always returns a Mot, enabling `config.get("a", "b", "c").number`
+undefined — it always returns a Mot, enabling `config.get("a", "b", "c").number()`
 with no null checks. This doesn't translate well to Rust:
 
 - A `&'static Mot` singleton has lifetime mismatch with `&self` borrows
@@ -128,6 +128,10 @@ already knows the pattern.
 doesn't have variadic functions. Providing both `get(key)` and `get_path(path)`
 covers both the common case and the deep-navigation case. A macro could help
 but macros in public APIs have discoverability problems.
+
+Note: the TypeScript API now supports `MotPath = (string | number)[]` where
+numeric segments index into array values. In Rust, mixed-type variadic args
+aren't possible, so array indexing uses `values()?[i]` instead.
 
 ### Convenience array accessors allocate
 

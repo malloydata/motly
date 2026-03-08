@@ -97,11 +97,15 @@ export class MOTLYSession {
   /**
    * Return a resolved Mot view of the current value.
    * Follows references, resolves env refs, and omits deleted nodes.
+   *
+   * Pass a {@link MotFactory} via `options.factory` to control what
+   * objects are created (e.g., Tags with read tracking). Without a
+   * factory, returns plain Mot instances.
    */
-  getMot(options?: GetMotOptions): Mot {
+  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M {
     this.ensureAlive();
     const tree = this.getValue();
-    return buildMot(tree, options);
+    return buildMot(tree, options as GetMotOptions) as M;
   }
 
   /**

@@ -15,5 +15,5 @@ export type {
 
 export { isRef, isDataNode, isEnvRef, formatRef } from "../../interface/src/types";
 
-export type { Mot, GetMotOptions } from "./mot";
+export type { Mot, MotPath, MotResolvedValue, MotFactory, GetMotOptions } from "./mot";
 export { MOTLYSession } from "./session";
