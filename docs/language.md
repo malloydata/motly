@@ -4,6 +4,47 @@ This is the complete, implementation-agnostic specification for the MOTLY config
 
 ## Values
 
+MOTLY has one fundamental rule: **a value can have properties**.
+
+Every value has two independent aspects:
+
+- What it **is** — a literal (string, number, boolean, date, env reference), an array, or a reference
+- What it **has** — named child values (properties)
+
+These are independent. A value can have data, properties, both, or neither:
+
+```motly
+# Value only
+port = 8080
+
+# Value and properties
+server = webhost { port = 8080  ssl = @true }
+
+# Properties only
+database: { host = localhost  port = 5432 }
+
+# Neither (a "flag" — the value just exists)
+experimental
+```
+
+When you write `port = 8080`, you aren't assigning a bare number — you're creating a value that is 8080. That value can also have properties:
+
+```motly
+port = 8080 { protocol = tcp }
+```
+
+This dual nature reflects how humans naturally describe things. A font isn't a bag of attributes with a `family` field — it *is* Helvetica, and it *has* properties:
+
+```motly
+font = Helvetica { size = 14  weight = bold }
+```
+
+In JSON you'd write `{"font": {"family": "Helvetica", "size": 14, "weight": "bold"}}` — burying the most important fact inside a property. MOTLY lets the primary identity of a thing be its value, with properties as secondary detail. Configuration is for humans, and humans say "the font is Helvetica" not "the font has a family field whose value is Helvetica."
+
+These two aspects are controlled independently by different operators. Understanding this separation is the key to understanding MOTLY's assignment syntax.
+
+## Literals
+
 ### Strings
 
 **Bare strings** don't need quotes. They can contain letters (`A-Z`, `a-z`), digits (`0-9`), underscores (`_`), and extended Latin characters (accented characters like `é`, `ñ`, `ü`):
@@ -26,9 +67,9 @@ hostname = "db.example.com"
 tab_separated = "col1\tcol2"
 ```
 
-Escape sequences: `\n` (newline), `\r` (carriage return), `\t` (tab), `\b` (backspace), `\f` (form feed), `\\` (backslash), `\"` (double quote), `\uXXXX` (Unicode code point). Any other `\x` produces the literal character `x`.
+Escape sequences: `\n` (newline), `\r` (carriage return), `\t` (tab), `\b` (backspace), `\f` (form feed), `\\` (backslash), `\"` (double quote), `\uXXXX` (Unicode code point). Any other `\x` produces the character `x` as-is.
 
-**Single-quoted strings** are raw -- backslashes are literal, not escape characters. The only special case is `\'`, which includes a literal backslash and prevents the quote from ending the string:
+**Single-quoted strings** are raw — backslashes are kept as-is, not treated as escape characters. The only special case is `\'`, which includes a literal backslash and prevents the quote from ending the string:
 
 ```motly
 regex = 'foo\d+bar'
@@ -46,7 +87,7 @@ It preserves newlines.
 """
 ```
 
-**Triple-single-quoted strings** (`'''...'''`) span multiple lines with raw semantics (backslashes are literal):
+**Triple-single-quoted strings** (`'''...'''`) span multiple lines with raw semantics (backslashes are kept as-is):
 
 ```motly
 regex_block = '''
@@ -117,7 +158,7 @@ debug = @false
 
 ### None
 
-The `@none` literal represents the absence of a value. It is used to clear the value slot of a node:
+Assigning `@none` clears what a value is without affecting its properties:
 
 ```motly
 name = hello
@@ -153,7 +194,7 @@ database: {
 }
 ```
 
-An environment reference is a **value** — it occupies the `eq` slot of a node. This means a node can have an env ref AND its own properties:
+And like any value, it can also have properties:
 
 ```motly
 database = @env.DB_URL {
@@ -162,9 +203,9 @@ database = @env.DB_URL {
 }
 ```
 
-Environment references are distinct from `$` references (which are structural links between nodes). An `@env` ref says "this node's value comes from the environment"; a `$` ref says "this node IS that other node."
+Environment references are distinct from `$` references (which are structural links between values). An `@env` ref says "this value comes from the environment"; a `$` ref says "this value IS that other value."
 
-### Arrays
+## Arrays
 
 Arrays are enclosed in square brackets. Elements are separated by commas. Trailing commas are allowed:
 
@@ -185,13 +226,27 @@ items = [one, two, three,]
 nothing = []
 ```
 
-Array elements can be objects:
+Every array element is a value. Like any value, an element can have a literal, properties, or both:
 
 ```motly
+# Literal-only elements (the common case)
+colors = [red, green, blue]
+
+# Elements with both literal and properties
+items = [
+  widget { color = red   size = 10 },
+  gadget { color = blue  size = 20 }
+]
+
+# Property-only elements (no literal)
 users = [
   { name = alice  role = admin },
   { name = bob    role = user }
 ]
+
+# Reference elements
+defaults: { timeout = 30 }
+configs = [$defaults, custom { timeout = 60 }]
 ```
 
 Arrays can be nested:
@@ -200,39 +255,13 @@ Arrays can be nested:
 matrix = [[1, 2], [3, 4]]
 ```
 
-Array elements can have both a value and properties:
-
-```motly
-items = [
-  widget { color = red  size = 10 },
-  gadget { color = blue size = 20 }
-]
-```
-
-## Nodes, Values, and Properties
-
-Every named entry in MOTLY is a **node**. A node has two independent aspects:
-
-- A **value** — a scalar (string, number, boolean, date, `@none`, or env reference)
-- **Properties** — a map of child nodes
-
-This dual nature reflects how humans naturally think about things. A font isn't a bag of attributes with a `family` field — it *is* Helvetica, and it *has* properties:
-
-```motly
-font = Helvetica { size = 14  weight = bold }
-```
-
-In JSON you'd write `{"font": {"family": "Helvetica", "size": 14, "weight": "bold"}}` — burying the most important fact inside a property. MOTLY lets the primary identity of a thing be its value, with properties as secondary detail. Configuration is for humans, and humans say "the font is Helvetica" not "the font has a family field whose value is Helvetica."
-
-These two aspects are controlled independently by different operators. Understanding this separation is the key to understanding MOTLY's assignment syntax.
-
 ## The Three Core Operators
 
-MOTLY has three assignment operators. Each controls a different combination of a node's value and properties:
+MOTLY has three assignment operators. Each controls a different combination of value and properties:
 
-- **`=`** operates **only on the value slot**. It never touches properties.
-- **`:`** operates **only on the properties slot**. It never touches the value.
-- **`:=`** operates on **both** simultaneously.
+- **`=`** sets the **value**. It never touches properties.
+- **`:`** replaces **properties**. It never touches the value.
+- **`:=`** sets the value **and** replaces properties simultaneously.
 
 ## The Assignment Matrix
 
@@ -253,7 +282,7 @@ The operators compose predictably:
 
 ### Example: Assigning Values with `=`
 
-The `=` operator sets the value of a node without affecting its properties:
+The `=` operator sets a value without affecting its properties:
 
 ```motly
 port = 8080
@@ -261,7 +290,7 @@ name = hello
 enabled = @true
 ```
 
-If the node already has properties, they are preserved:
+If the value already has properties, they are preserved:
 
 ```motly
 server = webhost { port = 8080  ssl = @true }
@@ -287,7 +316,7 @@ server = apphost { ssl = @true }
 
 ### Example: Replacing Properties with `:`
 
-The colon operator replaces all properties on a node without affecting its value:
+The colon operator replaces all properties without affecting the value:
 
 ```motly
 server: { host = localhost  port = 8080 }
@@ -386,7 +415,7 @@ config { -... }
 
 ## Flags (Define)
 
-A bare name with no value, `=`, or braces creates a "flag" -- a node that exists but has no value or properties:
+A bare name — with no `=`, `:`, `:=`, or braces — creates a "flag": a value that simply exists.
 
 ```motly
 hidden
@@ -455,11 +484,10 @@ primary_user = $users[0].name
 
 ### References with `=` (Pointers)
 
-When used with `=`, a reference creates a **pointer** — a live link to another node:
+When used with `=`, a reference creates a **pointer** — a live link to another value:
 
 ```motly
-name = $ref              # value becomes a pointer to ref. Properties untouched.
-name = $ref { color = red }  # value becomes a pointer to ref. Merge these properties.
+name = $ref              # this value becomes a pointer to ref
 ```
 
 ### Cloning with `:=` (Copy)
@@ -495,7 +523,7 @@ Loading `modes.staging` yields a complete connection map with both `cache` (clon
 
 ### Clone Boundary Rule
 
-When `:=` clones a subtree, all references within the cloned subtree must resolve within the subtree itself. If a relative reference would resolve to a node outside the cloned subtree, that is a compile error.
+When `:=` clones a subtree, all references within the cloned subtree must resolve within the subtree itself. If a relative reference would resolve to a value outside the cloned subtree, that is a compile error.
 
 A clone is always a self-contained snapshot. If you need to refer to something outside the subtree, use a concrete value rather than a relative reference that escapes the clone boundary.
 

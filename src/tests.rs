@@ -1,19 +1,19 @@
 use crate::tree::*;
 use crate::validate::{validate_references, validate_schema};
 
-/// Strip all location fields from a MOTLYNode tree (for fixture comparison).
-fn strip_locations(node: &mut MOTLYNode) {
+/// Strip all location fields from a MOTLYDataNode tree (for fixture comparison).
+fn strip_locations(node: &mut MOTLYDataNode) {
     node.location = None;
     if let Some(EqValue::Array(ref mut arr)) = node.eq {
         for pv in arr.iter_mut() {
-            if let MOTLYPropertyValue::Node(ref mut child) = pv {
+            if let MOTLYNode::Data(ref mut child) = pv {
                 strip_locations(child);
             }
         }
     }
     if let Some(ref mut props) = node.properties {
         for pv in props.values_mut() {
-            if let MOTLYPropertyValue::Node(ref mut child) = pv {
+            if let MOTLYNode::Data(ref mut child) = pv {
                 strip_locations(child);
             }
         }
@@ -29,9 +29,9 @@ const SCHEMA_FIXTURES: &str = include_str!("../test-data/fixtures/schema.json");
 const REF_FIXTURES: &str = include_str!("../test-data/fixtures/refs.json");
 const SESSION_FIXTURES: &str = include_str!("../test-data/fixtures/session.json");
 
-/// Convert a serde_json::Value (fixture "expected" format) to a MOTLYNode.
+/// Convert a serde_json::Value (fixture "expected" format) to a MOTLYDataNode.
 /// Uses from_wire to handle {"$date": "..."} in expected values.
-fn fixture_expected_to_value(expected: &serde_json::Value) -> MOTLYNode {
+fn fixture_expected_to_value(expected: &serde_json::Value) -> MOTLYDataNode {
     let json_str = serde_json::to_string(expected).unwrap();
     crate::from_json::from_wire(&json_str).unwrap()
 }
@@ -51,7 +51,7 @@ fn test_fixture_parse() {
 
         let value = if let Some(input_str) = input.as_str() {
             // Single input string
-            let result = crate::parse_motly_0(input_str, MOTLYNode::new());
+            let result = crate::parse_motly_0(input_str, MOTLYDataNode::new());
             if expect_errors {
                 assert!(
                     !result.errors.is_empty(),
@@ -73,7 +73,7 @@ fn test_fixture_parse() {
             result.value
         } else if let Some(input_arr) = input.as_array() {
             // Array of inputs: accumulate
-            let mut value = MOTLYNode::new();
+            let mut value = MOTLYDataNode::new();
             for chunk in input_arr {
                 let chunk_str = chunk.as_str().unwrap();
                 let result = crate::parse_motly_0(chunk_str, value);
@@ -116,7 +116,7 @@ fn test_fixture_parse_errors() {
         let name = fixture["name"].as_str().unwrap();
         let input = fixture["input"].as_str().unwrap();
 
-        let result = crate::parse_motly_0(input, MOTLYNode::new());
+        let result = crate::parse_motly_0(input, MOTLYDataNode::new());
         assert!(
             !result.errors.is_empty(),
             "Fixture '{}': expected parse errors for input '{}'",
@@ -137,7 +137,7 @@ fn test_fixture_schema() {
         let tag_input = fixture["input"].as_str().unwrap();
         let expected_errors = fixture["expectedErrors"].as_array().unwrap();
 
-        let schema = crate::parse_motly_0(schema_input, MOTLYNode::new());
+        let schema = crate::parse_motly_0(schema_input, MOTLYDataNode::new());
         assert!(
             schema.errors.is_empty(),
             "Fixture '{}': schema parse errors: {:?}",
@@ -145,7 +145,7 @@ fn test_fixture_schema() {
             schema.errors
         );
 
-        let tag = crate::parse_motly_0(tag_input, MOTLYNode::new());
+        let tag = crate::parse_motly_0(tag_input, MOTLYDataNode::new());
         assert!(
             tag.errors.is_empty(),
             "Fixture '{}': tag parse errors: {:?}",
@@ -219,7 +219,7 @@ fn test_fixture_refs() {
         let input = fixture["input"].as_str().unwrap();
         let expected_errors = fixture["expectedErrors"].as_array().unwrap();
 
-        let result = crate::parse_motly_0(input, MOTLYNode::new());
+        let result = crate::parse_motly_0(input, MOTLYDataNode::new());
         assert!(
             result.errors.is_empty(),
             "Fixture '{}': parse errors: {:?}",
@@ -288,8 +288,8 @@ fn test_fixture_session() {
         let name = fixture["name"].as_str().unwrap();
         let steps = fixture["steps"].as_array().unwrap();
 
-        let mut value = MOTLYNode::new();
-        let mut schema: Option<MOTLYNode> = None;
+        let mut value = MOTLYDataNode::new();
+        let mut schema: Option<MOTLYDataNode> = None;
 
         for step in steps {
             let action = step["action"].as_str().unwrap();
@@ -322,7 +322,7 @@ fn test_fixture_session() {
                 }
                 "parseSchema" => {
                     let input = step["input"].as_str().unwrap();
-                    let result = crate::parse_motly_0(input, MOTLYNode::new());
+                    let result = crate::parse_motly_0(input, MOTLYDataNode::new());
                     assert!(
                         result.errors.is_empty(),
                         "Fixture '{}': schema parse errors: {:?}",
@@ -332,7 +332,7 @@ fn test_fixture_session() {
                     schema = Some(result.value);
                 }
                 "reset" => {
-                    value = MOTLYNode::new();
+                    value = MOTLYDataNode::new();
                 }
                 "getValue" => {
                     if let Some(expected) = step.get("expected") {
@@ -403,7 +403,7 @@ fn test_fixture_session() {
 
 #[test]
 fn test_error_unclosed_bracket() {
-    let result = crate::parse_motly_0("a = [", MOTLYNode::new());
+    let result = crate::parse_motly_0("a = [", MOTLYDataNode::new());
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].code, "tag-parse-syntax-error");
     assert_eq!(result.errors[0].begin.line, 0);
@@ -412,7 +412,7 @@ fn test_error_unclosed_bracket() {
 
 #[test]
 fn test_error_unclosed_string() {
-    let result = crate::parse_motly_0("desc=\"forgot to close\n", MOTLYNode::new());
+    let result = crate::parse_motly_0("desc=\"forgot to close\n", MOTLYDataNode::new());
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].begin.line, 0);
     assert!(result.errors[0].begin.offset <= result.errors[0].end.offset);
@@ -420,14 +420,14 @@ fn test_error_unclosed_string() {
 
 #[test]
 fn test_error_on_second_line() {
-    let result = crate::parse_motly_0("valid=1\ninvalid=[", MOTLYNode::new());
+    let result = crate::parse_motly_0("valid=1\ninvalid=[", MOTLYDataNode::new());
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].begin.line, 1);
 }
 
 #[test]
 fn test_error_span_covers_region() {
-    let result = crate::parse_motly_0("a = [b", MOTLYNode::new());
+    let result = crate::parse_motly_0("a = [b", MOTLYDataNode::new());
     let err = &result.errors[0];
     assert_eq!(err.begin.line, 0);
     assert_eq!(err.end.line, 0);
@@ -436,7 +436,7 @@ fn test_error_span_covers_region() {
 
 #[test]
 fn test_error_span_unclosed_string() {
-    let result = crate::parse_motly_0("x=\"unterminated\n", MOTLYNode::new());
+    let result = crate::parse_motly_0("x=\"unterminated\n", MOTLYDataNode::new());
     let err = &result.errors[0];
     assert_eq!(err.begin.line, 0);
     assert_eq!(err.end.line, 0);
@@ -445,7 +445,7 @@ fn test_error_span_unclosed_string() {
 
 #[test]
 fn test_error_has_begin_end_positions() {
-    let result = crate::parse_motly_0("a = [", MOTLYNode::new());
+    let result = crate::parse_motly_0("a = [", MOTLYDataNode::new());
     let err = &result.errors[0];
     assert_eq!(err.begin.line, 0);
     assert_eq!(err.end.line, 0);
@@ -459,7 +459,7 @@ fn test_error_has_begin_end_positions() {
 
 #[test]
 fn test_json_simple() {
-    let json = crate::parse_motly_0("name=hello", MOTLYNode::new())
+    let json = crate::parse_motly_0("name=hello", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -468,7 +468,7 @@ fn test_json_simple() {
 
 #[test]
 fn test_json_link() {
-    let json = crate::parse_motly_0("ref=$target", MOTLYNode::new())
+    let json = crate::parse_motly_0("ref=$target", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -479,7 +479,7 @@ fn test_json_link() {
 
 #[test]
 fn test_json_deleted() {
-    let json = crate::parse_motly_0("-gone", MOTLYNode::new())
+    let json = crate::parse_motly_0("-gone", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -488,7 +488,7 @@ fn test_json_deleted() {
 
 #[test]
 fn test_json_array() {
-    let json = crate::parse_motly_0("items=[a, b]", MOTLYNode::new())
+    let json = crate::parse_motly_0("items=[a, b]", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -500,7 +500,7 @@ fn test_json_array() {
 
 #[test]
 fn test_json_number() {
-    let json = crate::parse_motly_0("count=42", MOTLYNode::new())
+    let json = crate::parse_motly_0("count=42", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -509,7 +509,7 @@ fn test_json_number() {
 
 #[test]
 fn test_json_boolean() {
-    let json = crate::parse_motly_0("active=@true", MOTLYNode::new())
+    let json = crate::parse_motly_0("active=@true", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -518,7 +518,7 @@ fn test_json_boolean() {
 
 #[test]
 fn test_json_date() {
-    let json = crate::parse_motly_0("created=@2024-01-15", MOTLYNode::new())
+    let json = crate::parse_motly_0("created=@2024-01-15", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -527,7 +527,7 @@ fn test_json_date() {
 
 #[test]
 fn test_json_nested() {
-    let json = crate::parse_motly_0("a { b { c=1 } }", MOTLYNode::new())
+    let json = crate::parse_motly_0("a { b { c=1 } }", MOTLYDataNode::new())
         .value
         .to_json();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -542,7 +542,7 @@ fn test_json_nested() {
 #[test]
 fn test_k8s_schema_parses() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
-    let result = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let result = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(
         result.errors.is_empty(),
         "K8s schema failed to parse: {:?}",
@@ -553,7 +553,7 @@ fn test_k8s_schema_parses() {
 #[test]
 fn test_k8s_sample_parses() {
     let sample_src = include_str!("../test-data/k8s-deployment-sample.motly");
-    let result = crate::parse_motly_0(sample_src, MOTLYNode::new());
+    let result = crate::parse_motly_0(sample_src, MOTLYDataNode::new());
     assert!(
         result.errors.is_empty(),
         "K8s sample failed to parse: {:?}",
@@ -565,8 +565,8 @@ fn test_k8s_sample_parses() {
 fn test_k8s_sample_validates_against_schema() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let sample_src = include_str!("../test-data/k8s-deployment-sample.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
-    let sample = crate::parse_motly_0(sample_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
+    let sample = crate::parse_motly_0(sample_src, MOTLYDataNode::new());
     assert!(schema.errors.is_empty());
     assert!(sample.errors.is_empty());
     let errors = validate_schema(&sample.value, &schema.value);
@@ -586,9 +586,9 @@ fn test_k8s_sample_validates_against_schema() {
 #[ignore] // Rust schema validator is a nop stub
 fn test_k8s_missing_required_fields() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(schema.errors.is_empty());
-    let tag = crate::parse_motly_0("apiVersion=\"apps/v1\"", MOTLYNode::new());
+    let tag = crate::parse_motly_0("apiVersion=\"apps/v1\"", MOTLYDataNode::new());
     let errors = validate_schema(&tag.value, &schema.value);
     assert!(errors
         .iter()
@@ -605,11 +605,11 @@ fn test_k8s_missing_required_fields() {
 #[ignore] // Rust schema validator is a nop stub
 fn test_k8s_wrong_kind_enum() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(schema.errors.is_empty());
     let tag = crate::parse_motly_0(
         "apiVersion=\"apps/v1\" kind=CronJob metadata { name=test } spec { selector { matchLabels { app=test } } template { metadata { name=test } spec { containers=[{name=x image=\"img:v1\"}] } } }",
-        MOTLYNode::new(),
+        MOTLYDataNode::new(),
     );
     assert!(tag.errors.is_empty());
     let errors = validate_schema(&tag.value, &schema.value);
@@ -626,11 +626,11 @@ fn test_k8s_wrong_kind_enum() {
 #[ignore] // Rust schema validator is a nop stub
 fn test_k8s_bad_image_pattern() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(schema.errors.is_empty());
     let tag = crate::parse_motly_0(
         "apiVersion=\"apps/v1\" kind=Deployment metadata { name=test } spec { selector { matchLabels { app=test } } template { metadata { name=test } spec { containers=[{name=x image=oopsnotag}] } } }",
-        MOTLYNode::new(),
+        MOTLYDataNode::new(),
     );
     assert!(tag.errors.is_empty());
     let errors = validate_schema(&tag.value, &schema.value);
@@ -645,11 +645,11 @@ fn test_k8s_bad_image_pattern() {
 #[ignore] // Rust schema validator is a nop stub
 fn test_k8s_bad_container_port_type() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(schema.errors.is_empty());
     let tag = crate::parse_motly_0(
         "apiVersion=\"apps/v1\" kind=Deployment metadata { name=test } spec { selector { matchLabels { app=test } } template { metadata { name=test } spec { containers=[{name=x image=\"img:v1\" ports=[{containerPort=eighty}]}] } } }",
-        MOTLYNode::new(),
+        MOTLYDataNode::new(),
     );
     assert!(tag.errors.is_empty());
     let errors = validate_schema(&tag.value, &schema.value);
@@ -663,12 +663,12 @@ fn test_k8s_bad_container_port_type() {
 // ── Location tracking tests ─────────────────────────────────────────
 
 /// Helper: get the location of a property node at the given path.
-fn prop_loc(node: &MOTLYNode, path: &[&str]) -> Option<MOTLYLocation> {
+fn prop_loc(node: &MOTLYDataNode, path: &[&str]) -> Option<MOTLYLocation> {
     let mut cur = node;
     for &key in path {
         match cur.properties.as_ref()?.get(key)? {
-            MOTLYPropertyValue::Node(n) => cur = n,
-            MOTLYPropertyValue::Ref { .. } => return None,
+            MOTLYNode::Data(n) => cur = n,
+            MOTLYNode::Ref { .. } => return None,
         }
     }
     cur.location
@@ -676,7 +676,7 @@ fn prop_loc(node: &MOTLYNode, path: &[&str]) -> Option<MOTLYLocation> {
 
 #[test]
 fn test_loc_simple_node_gets_location() {
-    let result = crate::parse_motly("a = 1", MOTLYNode::new(), 0);
+    let result = crate::parse_motly("a = 1", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let l = prop_loc(&result.value, &["a"]).expect("a should have location");
     assert_eq!(l.parse_id, 0);
@@ -686,7 +686,7 @@ fn test_loc_simple_node_gets_location() {
 
 #[test]
 fn test_loc_multiple_nodes() {
-    let result = crate::parse_motly("a = 1\nb = 2", MOTLYNode::new(), 0);
+    let result = crate::parse_motly("a = 1\nb = 2", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["b"]).unwrap();
@@ -698,7 +698,7 @@ fn test_loc_multiple_nodes() {
 
 #[test]
 fn test_loc_first_appearance_seteq() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -708,7 +708,7 @@ fn test_loc_first_appearance_seteq() {
     assert_eq!(l.parse_id, 0, "location should be from first parse");
     // Value should be updated
     match r2.value.properties.as_ref().unwrap().get("a").unwrap() {
-        MOTLYPropertyValue::Node(n) => {
+        MOTLYNode::Data(n) => {
             assert_eq!(n.eq, Some(EqValue::Scalar(Scalar::Number(2.0))));
         }
         _ => panic!("expected node"),
@@ -717,7 +717,7 @@ fn test_loc_first_appearance_seteq() {
 
 #[test]
 fn test_loc_first_appearance_update_properties() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a { b = 1 }", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -729,7 +729,7 @@ fn test_loc_first_appearance_update_properties() {
 
 #[test]
 fn test_loc_first_appearance_replace_properties() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -741,7 +741,7 @@ fn test_loc_first_appearance_replace_properties() {
 
 #[test]
 fn test_loc_assign_both_replaces_location() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -753,7 +753,7 @@ fn test_loc_assign_both_replaces_location() {
 
 #[test]
 fn test_loc_assign_both_clone_replaces_location() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a = 1 { x = 10 }", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -767,7 +767,7 @@ fn test_loc_assign_both_clone_replaces_location() {
 
 #[test]
 fn test_loc_nested_properties() {
-    let result = crate::parse_motly("a { b = 1\n  c = 2 }", MOTLYNode::new(), 0);
+    let result = crate::parse_motly("a { b = 1\n  c = 2 }", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["a", "b"]).unwrap();
@@ -778,7 +778,7 @@ fn test_loc_nested_properties() {
 
 #[test]
 fn test_loc_intermediate_path_nodes() {
-    let result = crate::parse_motly("a.b.c = 1", MOTLYNode::new(), 0);
+    let result = crate::parse_motly("a.b.c = 1", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["a", "b"]).unwrap();
@@ -790,7 +790,7 @@ fn test_loc_intermediate_path_nodes() {
 
 #[test]
 fn test_loc_deletion_sets_location() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -799,14 +799,14 @@ fn test_loc_deletion_sets_location() {
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 1, "deleted node should have new location");
     match r2.value.properties.as_ref().unwrap().get("a").unwrap() {
-        MOTLYPropertyValue::Node(n) => assert!(n.deleted),
+        MOTLYNode::Data(n) => assert!(n.deleted),
         _ => panic!("expected node"),
     }
 }
 
 #[test]
 fn test_loc_span_covers_statement() {
-    let result = crate::parse_motly("a = 100", MOTLYNode::new(), 0);
+    let result = crate::parse_motly("a = 100", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let l = prop_loc(&result.value, &["a"]).unwrap();
     assert_eq!(l.begin.offset, 0);
@@ -815,7 +815,7 @@ fn test_loc_span_covers_statement() {
 
 #[test]
 fn test_loc_define_bare_mention() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r1 = crate::parse_motly("a", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
@@ -827,7 +827,7 @@ fn test_loc_define_bare_mention() {
 
 #[test]
 fn test_loc_session_parse_ids() {
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     let r0 = crate::parse_motly("a = 1", node, 0);
     node = r0.value;
     let r1 = crate::parse_motly("b = 2", node, 1);
@@ -844,7 +844,7 @@ fn test_loc_session_parse_ids() {
 #[test]
 fn test_meta_schema_validates_itself() {
     let schema_src = include_str!("../test-data/motly-schema.motly");
-    let schema = crate::parse_motly_0(schema_src, MOTLYNode::new());
+    let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(
         schema.errors.is_empty(),
         "Meta-schema failed to parse: {:?}",

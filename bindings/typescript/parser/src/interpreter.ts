@@ -5,11 +5,11 @@ import {
   RefPathSegment,
   Span,
 } from "./ast";
-import { MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYError, MOTLYLocation, isRef, formatRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, isRef, formatRef } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
-/** Execute a list of parsed statements against an existing MOTLYNode. */
-export function execute(statements: Statement[], root: MOTLYNode, parseId: number): MOTLYError[] {
+/** Execute a list of parsed statements against an existing MOTLYDataNode. */
+export function execute(statements: Statement[], root: MOTLYDataNode, parseId: number): MOTLYError[] {
   const errors: MOTLYError[] = [];
   for (const stmt of statements) {
     executeStatement(stmt, root, errors, parseId);
@@ -17,7 +17,7 @@ export function execute(statements: Statement[], root: MOTLYNode, parseId: numbe
   return errors;
 }
 
-function executeStatement(stmt: Statement, node: MOTLYNode, errors: MOTLYError[], parseId: number): void {
+function executeStatement(stmt: Statement, node: MOTLYDataNode, errors: MOTLYError[], parseId: number): void {
   switch (stmt.kind) {
     case "setEq":
       executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors, parseId, stmt.span);
@@ -47,7 +47,7 @@ function makeLocation(parseId: number, span: Span): MOTLYLocation {
 }
 
 /** Set location on a node only if it doesn't already have one (first-appearance rule). */
-function setFirstLocation(node: MOTLYNode, parseId: number, span: Span): void {
+function setFirstLocation(node: MOTLYDataNode, parseId: number, span: Span): void {
   if (!node.location) {
     node.location = makeLocation(parseId, span);
   }
@@ -61,7 +61,7 @@ function setFirstLocation(node: MOTLYNode, parseId: number, span: Span): void {
  * `name = $ref { props }` produces a non-fatal error (ref created, props ignored).
  */
 function executeSetEq(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   value: TagValue,
   properties: Statement[] | null,
@@ -96,7 +96,7 @@ function executeSetEq(
   }
 
   // If it was a ref, convert to empty node
-  const target = ensureNode(props, writeKey);
+  const target = ensureDataNode(props, writeKey);
 
   // Set location on first appearance
   setFirstLocation(target, parseId, span);
@@ -119,7 +119,7 @@ function executeSetEq(
  * `name := $ref { props }` — clone + replace properties.
  */
 function executeAssignBoth(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   value: TagValue,
   properties: Statement[] | null,
@@ -132,7 +132,7 @@ function executeAssignBoth(
     value.value.kind === "reference"
   ) {
     // CLONE semantics: resolve + deep copy the target
-    let cloned: MOTLYNode;
+    let cloned: MOTLYDataNode;
     try {
       cloned = resolveAndClone(
         node,
@@ -160,7 +160,7 @@ function executeAssignBoth(
     getOrCreateProperties(parent)[writeKey] = cloned;
   } else {
     // Literal value: create fresh node (replaces everything)
-    const result: MOTLYNode = {};
+    const result: MOTLYDataNode = {};
     // := always sets a new location
     result.location = makeLocation(parseId, span);
     setEqSlot(result, value, parseId);
@@ -178,7 +178,7 @@ function executeAssignBoth(
  * `name: { props }` — preserve existing value, replace properties.
  */
 function executeReplaceProperties(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   properties: Statement[],
   errors: MOTLYError[],
@@ -187,7 +187,7 @@ function executeReplaceProperties(
 ): void {
   const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
 
-  const result: MOTLYNode = {};
+  const result: MOTLYDataNode = {};
 
   // Always preserve the existing value (if it's a node, not a ref)
   const parentProps = getOrCreateProperties(parent);
@@ -213,7 +213,7 @@ function executeReplaceProperties(
 }
 
 function executeUpdateProperties(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   properties: Statement[],
   errors: MOTLYError[],
@@ -229,7 +229,7 @@ function executeUpdateProperties(
     props[writeKey] = {};
   }
 
-  const target = ensureNode(props, writeKey);
+  const target = ensureDataNode(props, writeKey);
 
   // Set location on first appearance
   setFirstLocation(target, parseId, span);
@@ -240,7 +240,7 @@ function executeUpdateProperties(
 }
 
 function executeDefine(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   deleted: boolean,
   parseId: number,
@@ -249,13 +249,13 @@ function executeDefine(
   const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
   const props = getOrCreateProperties(parent);
   if (deleted) {
-    const delNode: MOTLYNode = { deleted: true };
+    const delNode: MOTLYDataNode = { deleted: true };
     delNode.location = makeLocation(parseId, span);
     props[writeKey] = delNode;
   } else {
     // Get-or-create: if node already exists, leave it alone
     if (props[writeKey] === undefined) {
-      const newNode: MOTLYNode = {};
+      const newNode: MOTLYDataNode = {};
       newNode.location = makeLocation(parseId, span);
       props[writeKey] = newNode;
     }
@@ -264,11 +264,11 @@ function executeDefine(
 
 /** Navigate to the parent of the final path segment, creating intermediate nodes. */
 function buildAccessPath(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
   parseId: number,
   span: Span
-): [string, MOTLYNode] {
+): [string, MOTLYDataNode] {
   let current = node;
 
   for (let i = 0; i < path.length - 1; i++) {
@@ -276,12 +276,12 @@ function buildAccessPath(
     const props = getOrCreateProperties(current);
 
     if (props[segment] === undefined) {
-      const intermediate: MOTLYNode = {};
+      const intermediate: MOTLYDataNode = {};
       intermediate.location = makeLocation(parseId, span);
       props[segment] = intermediate;
     }
 
-    current = ensureNode(props, segment);
+    current = ensureDataNode(props, segment);
     // Set location on intermediate nodes (first-appearance)
     setFirstLocation(current, parseId, span);
   }
@@ -290,7 +290,7 @@ function buildAccessPath(
 }
 
 /** Set the eq slot on a target node from a TagValue. */
-function setEqSlot(target: MOTLYNode, value: TagValue, parseId: number): void {
+function setEqSlot(target: MOTLYDataNode, value: TagValue, parseId: number): void {
   if (value.kind === "array") {
     target.eq = resolveArray(value.elements, [], parseId);
   } else {
@@ -321,12 +321,12 @@ function setEqSlot(target: MOTLYNode, value: TagValue, parseId: number): void {
   }
 }
 
-/** Resolve an array of AST elements to MOTLYPropertyValues. */
-function resolveArray(elements: ArrayElement[], errors: MOTLYError[], parseId: number): MOTLYPropertyValue[] {
+/** Resolve an array of AST elements to MOTLYNodes. */
+function resolveArray(elements: ArrayElement[], errors: MOTLYError[], parseId: number): MOTLYNode[] {
   return elements.map((el) => resolveArrayElement(el, errors, parseId));
 }
 
-function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: number): MOTLYPropertyValue {
+function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: number): MOTLYNode {
   // Check if the element value is a reference → becomes MOTLYRef
   if (el.value !== null && el.value.kind === "scalar" && el.value.value.kind === "reference") {
     if (el.properties !== null) {
@@ -341,7 +341,7 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: nu
     return makeRef(el.value.value.ups, el.value.value.path);
   }
 
-  const node: MOTLYNode = {};
+  const node: MOTLYDataNode = {};
   node.location = makeLocation(parseId, el.span);
 
   if (el.value !== null) {
@@ -384,13 +384,13 @@ function formatRefPath(ups: number, path: RefPathSegment[]): string {
 
 /** Resolve a reference path in the tree and return a deep clone. */
 function resolveAndClone(
-  root: MOTLYNode,
+  root: MOTLYDataNode,
   stmtPath: string[],
   ups: number,
   refPath: RefPathSegment[]
-): MOTLYNode {
+): MOTLYDataNode {
   const refStr = formatRefPath(ups, refPath);
-  let start: MOTLYNode;
+  let start: MOTLYDataNode;
 
   if (ups === 0) {
     // Absolute reference: start at root
@@ -417,7 +417,7 @@ function resolveAndClone(
   }
 
   // Follow refPath segments
-  let current: MOTLYNode = start;
+  let current: MOTLYDataNode = start;
   for (const seg of refPath) {
     if (seg.kind === "name") {
       if (!current.properties) {
@@ -460,7 +460,7 @@ function cloneError(message: string): MOTLYError {
  * if N > D. Absolute references (ups=0) are left alone.
  */
 function sanitizeClonedRefs(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   depth: number,
   errors: MOTLYError[]
 ): void {
@@ -479,9 +479,9 @@ function sanitizeClonedRefs(
   }
 }
 
-/** Sanitize a single property value within a cloned subtree (in an array context). */
+/** Sanitize a single node within a cloned subtree (in an array context). */
 function sanitizeClonedPv(
-  arr: MOTLYPropertyValue[],
+  arr: MOTLYNode[],
   index: number,
   depth: number,
   errors: MOTLYError[]
@@ -504,9 +504,9 @@ function sanitizeClonedPv(
   }
 }
 
-/** Sanitize a single property value within a cloned subtree (in a properties context). */
+/** Sanitize a single node within a cloned subtree (in a properties context). */
 function sanitizeClonedPvInProps(
-  props: Record<string, MOTLYPropertyValue>,
+  props: Record<string, MOTLYNode>,
   key: string,
   depth: number,
   errors: MOTLYError[]
@@ -529,10 +529,10 @@ function sanitizeClonedPvInProps(
   }
 }
 
-/** Get or create the properties object on a MOTLYNode. */
+/** Get or create the properties object on a MOTLYDataNode. */
 function getOrCreateProperties(
-  node: MOTLYNode
-): Record<string, MOTLYPropertyValue> {
+  node: MOTLYDataNode
+): Record<string, MOTLYNode> {
   if (!node.properties) {
     node.properties = {};
   }
@@ -540,19 +540,19 @@ function getOrCreateProperties(
 }
 
 /**
- * Ensure the property value at props[key] is a MOTLYNode (not a MOTLYRef).
+ * Ensure the node at props[key] is a MOTLYDataNode (not a MOTLYRef).
  * If it's a ref, replace it with an empty node.
- * Returns a mutable reference to the node.
+ * Returns a mutable reference to the data node.
  */
-function ensureNode(
-  props: Record<string, MOTLYPropertyValue>,
+function ensureDataNode(
+  props: Record<string, MOTLYNode>,
   key: string
-): MOTLYNode {
+): MOTLYDataNode {
   const pv = props[key];
   if (isRef(pv)) {
-    const node: MOTLYNode = {};
+    const node: MOTLYDataNode = {};
     props[key] = node;
     return node;
   }
-  return pv as MOTLYNode;
+  return pv;
 }

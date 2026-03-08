@@ -1,6 +1,6 @@
 import {
   MOTLYNode,
-  MOTLYPropertyValue,
+  MOTLYDataNode,
   MOTLYRef,
   MOTLYRefSegment,
   MOTLYLocation,
@@ -16,7 +16,7 @@ function pushSchemaError(
   code: string,
   message: string,
   path: string[],
-  node?: MOTLYNode
+  node?: MOTLYDataNode
 ): void {
   const err: MOTLYSchemaError = { code, message, path };
   if (node?.location) err.location = node.location;
@@ -25,19 +25,19 @@ function pushSchemaError(
 
 // ── Reference Validation ────────────────────────────────────────
 
-export function validateReferences(root: MOTLYNode): MOTLYValidationError[] {
+export function validateReferences(root: MOTLYDataNode): MOTLYValidationError[] {
   const errors: MOTLYValidationError[] = [];
   const path: string[] = [];
-  const ancestors: MOTLYNode[] = [root];
+  const ancestors: MOTLYDataNode[] = [root];
   walkRefs(root, path, ancestors, root, errors);
   return errors;
 }
 
 function walkRefs(
-  node: MOTLYNode,
+  node: MOTLYDataNode,
   path: string[],
-  ancestors: MOTLYNode[],
-  root: MOTLYNode,
+  ancestors: MOTLYDataNode[],
+  root: MOTLYDataNode,
   errors: MOTLYValidationError[]
 ): void {
   // Check array elements in eq
@@ -75,11 +75,11 @@ function walkRefs(
 }
 
 function walkArrayRefs(
-  arr: MOTLYPropertyValue[],
+  arr: MOTLYNode[],
   path: string[],
-  ancestors: MOTLYNode[],
-  parentNode: MOTLYNode,
-  root: MOTLYNode,
+  ancestors: MOTLYDataNode[],
+  parentNode: MOTLYDataNode,
+  root: MOTLYDataNode,
   errors: MOTLYValidationError[]
 ): void {
   for (let i = 0; i < arr.length; i++) {
@@ -109,12 +109,12 @@ function walkArrayRefs(
 
 function checkLink(
   link: MOTLYRef,
-  ancestors: MOTLYNode[],
-  root: MOTLYNode
+  ancestors: MOTLYDataNode[],
+  root: MOTLYDataNode
 ): string | null {
   const linkStr = formatRef(link);
 
-  let start: MOTLYNode;
+  let start: MOTLYDataNode;
   if (link.linkUps === 0) {
     start = root;
   } else {
@@ -129,11 +129,11 @@ function checkLink(
 }
 
 function resolvePath(
-  start: MOTLYNode,
+  start: MOTLYDataNode,
   segments: MOTLYRefSegment[],
   linkStr: string
 ): string | null {
-  let current: MOTLYNode | "terminal" = start;
+  let current: MOTLYDataNode | "terminal" = start;
 
   for (const seg of segments) {
     if (current === "terminal") {
@@ -144,7 +144,7 @@ function resolvePath(
       if (!current.properties) {
         return `Reference "${linkStr}" could not be resolved: property "${seg}" not found (node has no properties)`;
       }
-      const childPv: MOTLYPropertyValue | undefined = current.properties[seg];
+      const childPv: MOTLYNode | undefined = current.properties[seg];
       if (childPv === undefined) {
         return `Reference "${linkStr}" could not be resolved: property "${seg}" not found`;
       }
@@ -160,7 +160,7 @@ function resolvePath(
       if (seg >= current.eq.length) {
         return `Reference "${linkStr}" could not be resolved: index [${seg}] out of bounds (array length ${current.eq.length})`;
       }
-      const elemPv: MOTLYPropertyValue = current.eq[seg];
+      const elemPv: MOTLYNode = current.eq[seg];
       if (isRef(elemPv)) {
         current = "terminal";
       } else {
@@ -183,7 +183,7 @@ const MAX_VALIDATION_DEPTH = 64;
 
 // Pre-loaded types: the validator seeds the namespace with these
 // before reading user-defined types from the schema's TYPES block.
-const PRELOADED_TYPES: Record<string, MOTLYNode> = {
+const PRELOADED_TYPES: Record<string, MOTLYDataNode> = {
   string:  { properties: { VALUE: { eq: "string" } } },
   number:  { properties: { VALUE: { eq: "number" } } },
   integer: { properties: { VALUE: { eq: "integer" } } },
@@ -195,8 +195,8 @@ const PRELOADED_TYPES: Record<string, MOTLYNode> = {
 };
 
 export function validateSchema(
-  tag: MOTLYNode,
-  schema: MOTLYNode
+  tag: MOTLYDataNode,
+  schema: MOTLYDataNode
 ): MOTLYSchemaError[] {
   const errors: MOTLYSchemaError[] = [];
   const types = buildTypesMap(schema, errors);
@@ -205,10 +205,10 @@ export function validateSchema(
 }
 
 function buildTypesMap(
-  schema: MOTLYNode,
+  schema: MOTLYDataNode,
   errors: MOTLYSchemaError[]
-): Record<string, MOTLYNode> {
-  const types: Record<string, MOTLYNode> = { ...PRELOADED_TYPES };
+): Record<string, MOTLYDataNode> {
+  const types: Record<string, MOTLYDataNode> = { ...PRELOADED_TYPES };
   const typesNode = getDirective(schema, "TYPES");
   if (typesNode?.properties) {
     for (const [name, pv] of Object.entries(typesNode.properties)) {
@@ -228,7 +228,7 @@ function buildTypesMap(
 }
 
 /** Read a directive property from a constraint node. */
-function getDirective(node: MOTLYNode, name: string): MOTLYNode | undefined {
+function getDirective(node: MOTLYDataNode, name: string): MOTLYDataNode | undefined {
   if (!node.properties) return undefined;
   const pv = node.properties[name];
   if (pv === undefined || isRef(pv)) return undefined;
@@ -238,9 +238,9 @@ function getDirective(node: MOTLYNode, name: string): MOTLYNode | undefined {
 // ── Core constraint validation ──────────────────────────────────
 
 function validateConstraint(
-  target: MOTLYNode,
-  constraint: MOTLYNode,
-  types: Record<string, MOTLYNode>,
+  target: MOTLYDataNode,
+  constraint: MOTLYDataNode,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -270,9 +270,9 @@ function validateConstraint(
 // ── Value slot validation ───────────────────────────────────────
 
 function validateValue(
-  target: MOTLYNode,
-  valueNode: MOTLYNode,
-  types: Record<string, MOTLYNode>,
+  target: MOTLYDataNode,
+  valueNode: MOTLYDataNode,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -351,10 +351,10 @@ function describeValue(eq: unknown): string {
 
 function validateStringRefinements(
   value: string,
-  valueNode: MOTLYNode,
+  valueNode: MOTLYDataNode,
   path: string[],
   errors: MOTLYSchemaError[],
-  target: MOTLYNode
+  target: MOTLYDataNode
 ): void {
   validateEnumRefinement(value, valueNode, path, errors, target);
 
@@ -383,10 +383,10 @@ function validateStringRefinements(
 
 function validateNumberRefinements(
   value: number,
-  valueNode: MOTLYNode,
+  valueNode: MOTLYDataNode,
   path: string[],
   errors: MOTLYSchemaError[],
-  target: MOTLYNode
+  target: MOTLYDataNode
 ): void {
   validateEnumRefinement(value, valueNode, path, errors, target);
 
@@ -403,10 +403,10 @@ function validateNumberRefinements(
 
 function validateEnumRefinement(
   value: string | number | boolean | Date,
-  valueNode: MOTLYNode,
+  valueNode: MOTLYDataNode,
   path: string[],
   errors: MOTLYSchemaError[],
-  target: MOTLYNode
+  target: MOTLYDataNode
 ): void {
   const enumNode = getDirective(valueNode, "ENUM");
   if (!enumNode || !Array.isArray(enumNode.eq)) return;
@@ -422,7 +422,7 @@ function validateEnumRefinement(
 
   if (!matches) {
     const allowed = enumNode.eq
-      .filter((a): a is MOTLYNode => !isRef(a))
+      .filter((a): a is MOTLYDataNode => !isRef(a))
       .map((a) => String(a.eq));
     pushSchemaError(errors, "invalid-enum-value", `Value does not match any allowed enum value. Allowed: [${allowed.join(", ")}]`, [...path], target);
   }
@@ -434,9 +434,9 @@ type AdditionalPolicy =
   | { kind: "reject" }
   | { kind: "accept" }
   | { kind: "type"; typeName: string }
-  | { kind: "inline"; constraint: MOTLYNode };
+  | { kind: "inline"; constraint: MOTLYDataNode };
 
-function getAdditionalPolicy(constraint: MOTLYNode): AdditionalPolicy {
+function getAdditionalPolicy(constraint: MOTLYDataNode): AdditionalPolicy {
   if (!constraint.properties) return { kind: "reject" };
   const pv = constraint.properties["ADDITIONAL"];
   if (pv === undefined) return { kind: "reject" };
@@ -460,9 +460,9 @@ function getAdditionalPolicy(constraint: MOTLYNode): AdditionalPolicy {
 }
 
 function validateProperties(
-  target: MOTLYNode,
-  constraint: MOTLYNode,
-  types: Record<string, MOTLYNode>,
+  target: MOTLYDataNode,
+  constraint: MOTLYDataNode,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -508,8 +508,8 @@ function validateProperties(
       const propPath = [...path, key];
       switch (additional.kind) {
         case "reject": {
-          const unknownNode = isRef(targetProps[key]) ? undefined : targetProps[key] as MOTLYNode;
-          pushSchemaError(errors, "unknown-property", `Unknown property "${key}"`, propPath, unknownNode);
+          const pv = targetProps[key];
+          pushSchemaError(errors, "unknown-property", `Unknown property "${key}"`, propPath, isRef(pv) ? undefined : pv);
           break;
         }
         case "accept":
@@ -524,20 +524,15 @@ function validateProperties(
             depth
           );
           break;
-        case "inline":
-          if (isRef(targetProps[key])) {
+        case "inline": {
+          const pv = targetProps[key];
+          if (isRef(pv)) {
             pushSchemaError(errors, "wrong-type", "Expected a value but found a link", propPath);
           } else {
-            validateConstraint(
-              targetProps[key] as MOTLYNode,
-              additional.constraint,
-              types,
-              propPath,
-              errors,
-              depth + 1
-            );
+            validateConstraint(pv, additional.constraint, types, propPath, errors, depth + 1);
           }
           break;
+        }
       }
     }
   }
@@ -550,16 +545,16 @@ function validateProperties(
 }
 
 /**
- * Validate a target property value against a property definition.
+ * Validate a target node against a property definition.
  *
  * A property definition is either:
  *   - A type reference: eq is a string type name (e.g. { eq: "string" })
  *   - An inline constraint: no eq, has directive properties (VALUE, REQUIRED, etc.)
  */
 function validatePropertyValue(
-  targetPv: MOTLYPropertyValue,
-  propDef: MOTLYNode,
-  types: Record<string, MOTLYNode>,
+  targetPv: MOTLYNode,
+  propDef: MOTLYDataNode,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -582,9 +577,9 @@ function validatePropertyValue(
 // ── Type resolution ─────────────────────────────────────────────
 
 function validateAgainstTypeName(
-  target: MOTLYNode,
+  target: MOTLYDataNode,
   typeName: string,
-  types: Record<string, MOTLYNode>,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -611,9 +606,9 @@ function validateAgainstTypeName(
 }
 
 function validateArrayType(
-  target: MOTLYNode,
+  target: MOTLYDataNode,
   innerType: string,
-  types: Record<string, MOTLYNode>,
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -637,9 +632,9 @@ function validateArrayType(
 // ── Union validation ────────────────────────────────────────────
 
 function validateOneOfArray(
-  target: MOTLYNode,
-  typeRefs: MOTLYPropertyValue[],
-  types: Record<string, MOTLYNode>,
+  target: MOTLYDataNode,
+  typeRefs: MOTLYNode[],
+  types: Record<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -676,9 +671,9 @@ function validateOneOfArray(
 // ── Metadata validation ─────────────────────────────────────────
 
 function validateExclusiveGroups(
-  required: Record<string, MOTLYPropertyValue> | undefined,
-  optional: Record<string, MOTLYPropertyValue> | undefined,
-  targetProps: Record<string, MOTLYPropertyValue> | undefined,
+  required: Record<string, MOTLYNode> | undefined,
+  optional: Record<string, MOTLYNode> | undefined,
+  targetProps: Record<string, MOTLYNode> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
@@ -686,7 +681,7 @@ function validateExclusiveGroups(
 
   const groups: Record<string, string[]> = {};
 
-  function collect(propDefs: Record<string, MOTLYPropertyValue> | undefined) {
+  function collect(propDefs: Record<string, MOTLYNode> | undefined) {
     if (!propDefs) return;
     for (const [key, pv] of Object.entries(propDefs)) {
       if (isRef(pv)) continue;
@@ -698,7 +693,7 @@ function validateExclusiveGroups(
         groupNames = [exclusive.eq];
       } else if (Array.isArray(exclusive.eq)) {
         groupNames = exclusive.eq
-          .filter((e): e is MOTLYNode => !isRef(e))
+          .filter((e): e is MOTLYDataNode => !isRef(e))
           .map((e) => String(e.eq));
       } else {
         continue;
@@ -723,15 +718,15 @@ function validateExclusiveGroups(
 }
 
 function validateRequiresDeps(
-  required: Record<string, MOTLYPropertyValue> | undefined,
-  optional: Record<string, MOTLYPropertyValue> | undefined,
-  targetProps: Record<string, MOTLYPropertyValue> | undefined,
+  required: Record<string, MOTLYNode> | undefined,
+  optional: Record<string, MOTLYNode> | undefined,
+  targetProps: Record<string, MOTLYNode> | undefined,
   path: string[],
   errors: MOTLYSchemaError[]
 ): void {
   if (!targetProps) return;
 
-  function check(propDefs: Record<string, MOTLYPropertyValue> | undefined) {
+  function check(propDefs: Record<string, MOTLYNode> | undefined) {
     if (!propDefs) return;
     for (const [key, pv] of Object.entries(propDefs)) {
       if (isRef(pv)) continue;

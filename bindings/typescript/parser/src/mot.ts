@@ -1,6 +1,6 @@
 import {
   MOTLYNode,
-  MOTLYPropertyValue,
+  MOTLYDataNode,
   MOTLYRef,
   MOTLYValue,
   isRef,
@@ -204,16 +204,16 @@ function makeMot(
   return mot;
 }
 
-// Navigate a ref to its final concrete MOTLYNode target.
+// Navigate a ref to its final concrete MOTLYDataNode target.
 // Returns undefined if the ref can't be resolved (missing path, cycle, etc.)
 function navigateRef(
   ref: MOTLYRef,
-  root: MOTLYNode,
-  ancestors: MOTLYNode[],
-  visiting: Set<MOTLYPropertyValue>,
-): { target: MOTLYNode; ancestors: MOTLYNode[] } | undefined {
-  let start: MOTLYNode;
-  let startAncestors: MOTLYNode[];
+  root: MOTLYDataNode,
+  ancestors: MOTLYDataNode[],
+  visiting: Set<MOTLYNode>,
+): { target: MOTLYDataNode; ancestors: MOTLYDataNode[] } | undefined {
+  let start: MOTLYDataNode;
+  let startAncestors: MOTLYDataNode[];
   if (ref.linkUps === 0) {
     start = root;
     startAncestors = [];
@@ -224,9 +224,9 @@ function navigateRef(
     startAncestors = ancestors.slice(0, idx);
   }
 
-  let current: MOTLYPropertyValue = start;
+  let current: MOTLYNode = start;
   let navAncestors = startAncestors;
-  let parent: MOTLYNode = start;
+  let parent: MOTLYDataNode = start;
 
   for (let i = 0; i < ref.linkTo.length; i++) {
     // If we hit a ref mid-navigation, follow it
@@ -238,11 +238,11 @@ function navigateRef(
       if (!resolved) return undefined;
       current = resolved.target;
       navAncestors = resolved.ancestors;
-      parent = current as MOTLYNode;
+      parent = current;
       i--;
       continue;
     }
-    const node = current as MOTLYNode;
+    const node: MOTLYDataNode = current;
     const seg = ref.linkTo[i];
     if (typeof seg === "string") {
       if (!node.properties || !(seg in node.properties)) return undefined;
@@ -267,19 +267,19 @@ function navigateRef(
     return resolved;
   }
 
-  return { target: current as MOTLYNode, ancestors: navAncestors };
+  return { target: current, ancestors: navAncestors };
 }
 
-export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
+export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
   const env = options?.env;
-  const cache = new Map<MOTLYNode, Mot>();
+  const cache = new Map<MOTLYDataNode, Mot>();
 
   // ancestors does NOT include `node` — it's the chain above.
-  // Matches the convention in resolve.ts / validate.ts.
+  // Matches the convention in validate.ts.
   function resolveNode(
-    node: MOTLYNode,
-    root: MOTLYNode,
-    ancestors: MOTLYNode[],
+    node: MOTLYDataNode,
+    root: MOTLYDataNode,
+    ancestors: MOTLYDataNode[],
   ): Mot {
     if (node.deleted) return undefinedMot;
     if (cache.has(node)) return cache.get(node)!;
@@ -295,7 +295,7 @@ export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
       for (const [key, pv] of Object.entries(node.properties)) {
         // Refs in properties see `ancestors` (not including node).
         // Child nodes get [...ancestors, node].
-        const childMot = resolvePropertyValue(pv, root, ancestors, node);
+        const childMot = resolveMotlyNode(pv, root, ancestors, node);
         if (childMot.exists) {
           properties.set(key, childMot);
         }
@@ -307,22 +307,22 @@ export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
 
   // ancestors = chain above parentNode (not including parentNode).
   // parentNode = the node that owns this property.
-  function resolvePropertyValue(
-    pv: MOTLYPropertyValue,
-    root: MOTLYNode,
-    ancestors: MOTLYNode[],
-    parentNode: MOTLYNode,
+  function resolveMotlyNode(
+    pv: MOTLYNode,
+    root: MOTLYDataNode,
+    ancestors: MOTLYDataNode[],
+    parentNode: MOTLYDataNode,
   ): Mot {
     if (isRef(pv)) {
       // Refs resolve relative to ancestors (not including parentNode)
-      const visiting = new Set<MOTLYPropertyValue>();
+      const visiting = new Set<MOTLYNode>();
       visiting.add(pv);
       const nav = navigateRef(pv, root, ancestors, visiting);
       if (!nav) return undefinedMot;
       if (nav.target.deleted) return undefinedMot;
       return resolveNode(nav.target, root, nav.ancestors);
     }
-    const node = pv as MOTLYNode;
+    const node = pv;
     if (node.deleted) return undefinedMot;
     // Child nodes get parentNode pushed onto ancestors
     return resolveNode(node, root, [...ancestors, parentNode]);
@@ -330,9 +330,9 @@ export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
 
   function resolveEq(
     eq: MOTLYValue | undefined,
-    root: MOTLYNode,
-    ancestors: MOTLYNode[],
-    parentNode: MOTLYNode,
+    root: MOTLYDataNode,
+    ancestors: MOTLYDataNode[],
+    parentNode: MOTLYDataNode,
   ): ResolvedValue {
     if (eq === undefined) return undefined;
     if (isEnvRef(eq)) {
@@ -342,11 +342,11 @@ export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
     }
     if (Array.isArray(eq)) {
       // Array elements are children of parentNode.
-      // Push parentNode onto ancestors, matching resolve.ts convention.
+      // Push parentNode onto ancestors, matching validate.ts convention.
       const arrAncestors = [...ancestors, parentNode];
       const elements: Mot[] = [];
       for (const elem of eq) {
-        elements.push(resolvePropertyValue(elem, root, arrAncestors, parentNode));
+        elements.push(resolveMotlyNode(elem, root, arrAncestors, parentNode));
       }
       return { type: "array", value: elements };
     }
@@ -357,6 +357,6 @@ export function buildMot(root: MOTLYNode, options?: GetMotOptions): Mot {
     return undefined;
   }
 
-  // Initial call: root is in its own ancestor chain (matches resolve.ts)
+  // Initial call: root is in its own ancestor chain (matches validate.ts)
   return resolveNode(root, root, [root]);
 }

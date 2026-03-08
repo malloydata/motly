@@ -90,7 +90,8 @@ See the [full language reference](https://github.com/malloydata/motly/blob/main/
 class MOTLYSession {
   parse(source: string): MOTLYParseResult;
   parseSchema(source: string): MOTLYParseResult;
-  getValue(): MOTLYNode;
+  getValue(): MOTLYDataNode;
+  getMot(options?: GetMotOptions): Mot;
   reset(): void;
   validateSchema(): MOTLYSchemaError[];
   validateReferences(): MOTLYValidationError[];
@@ -103,6 +104,7 @@ class MOTLYSession {
 | `parse(source)` | Parse MOTLY source and apply it to the session value. Returns `{ parseId, errors }`. Successive calls accumulate into the same value tree; each call gets an incrementing `parseId` for mapping locations back to sources. |
 | `parseSchema(source)` | Parse MOTLY source as a schema (replaces any previous schema). Returns `{ parseId, errors }`. |
 | `getValue()` | Return a deep clone of the current value tree. |
+| `getMot(options?)` | Return a resolved, read-only `Mot` view of the value tree. Options: `{ env }` for `@env` resolution. |
 | `reset()` | Clear the value tree (schema is kept). |
 | `validateSchema()` | Validate the current value against the stored schema. Returns `[]` if no schema is set. |
 | `validateReferences()` | Check that all `$`-references in the value tree resolve. |
@@ -112,16 +114,17 @@ class MOTLYSession {
 
 ```typescript
 // The value tree
-interface MOTLYNode {
+type MOTLYNode = MOTLYDataNode | MOTLYRef;
+
+interface MOTLYDataNode {
   eq?: MOTLYValue;
-  properties?: Record<string, MOTLYPropertyValue>;
+  properties?: Record<string, MOTLYNode>;
   deleted?: boolean;
   location?: MOTLYLocation;     // source location of first appearance
 }
 
-type MOTLYScalar        = string | number | boolean | Date;
-type MOTLYValue         = MOTLYScalar | MOTLYEnvRef | MOTLYPropertyValue[];
-type MOTLYPropertyValue = MOTLYNode | MOTLYRef;
+type MOTLYScalar = string | number | boolean | Date;
+type MOTLYValue  = MOTLYScalar | MOTLYEnvRef | MOTLYNode[];
 
 interface MOTLYRef    { linkTo: MOTLYRefSegment[]; linkUps: number }
 interface MOTLYEnvRef { env: string }

@@ -295,7 +295,7 @@ class Parser {
     }
     if (this.startsWith("env.")) {
       this.advance(4);
-      const name = this.parseBareString();
+      const name = this.parseIdentifier();
       return { kind: "env", name };
     }
     const ch = this.peekChar();
@@ -875,6 +875,11 @@ class Parser {
 
     if (ch === "[") {
       const elements = this.parseArray();
+      this.skipWs();
+      if (this.peekChar() === "{") {
+        const props = this.parsePropertiesBlock();
+        return { value: { kind: "array", elements }, properties: props, span: { begin, end: this.position() } };
+      }
       return { value: { kind: "array", elements }, properties: null, span: { begin, end: this.position() } };
     }
 

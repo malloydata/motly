@@ -2,11 +2,14 @@
 
 Changes from the previous grammar:
 
+- **Unified** `value` production to express that any value can have properties — there are no bare scalars in MOTLY.
+- **Renamed** `scalarValue` → `literal` (the atomic value types: string, number, boolean, date, none, envRef).
+- **Simplified** `arrayElement` to `value | properties` — each array element is a value.
 - **Added** `assignBoth` production for the `:=` operator.
-- **Added** `none` literal (`@none`) to the `value` production.
+- **Added** `none` literal (`@none`) to the `literal` production.
 - **Added** `heredocString` (`<<<...>>>`) to the `string` production — a raw multi-line string with automatic dedentation based on the first non-empty line's indentation.
-- **Added** `envRef` production (`@env.NAME`) to the `value` and `scalarValue` productions — reads a value from the environment at resolution time.
-- **Removed** `propName "=" [ "..." ] properties` from `replaceProps` (was a synonym for `:`; confusing under new semantics where `=` only touches the value slot).
+- **Added** `envRef` production (`@env.NAME`) to the `literal` production — reads a value from the environment at resolution time.
+- **Removed** `propName "=" [ "..." ] properties` from `replaceProps` (was a synonym for `:`; confusing under new semantics where `=` only touches the value).
 - **Removed** `"{" "..." "}"` from `properties` (the `{ ... }` preserve-properties form is superseded by the orthogonality of `=` and `:`).
 - **Renamed** statement productions for clarity: `assignValue`, `assignBoth`, `replaceProps`, `mergeProps`.
 
@@ -18,14 +21,15 @@ statementList   ::= { "," } { statement { "," } }
 (* ================================================================
    Statements
    ================================================================
-   assignValue   — sets the value slot only; properties unchanged.
-                   Optional trailing { } merges additional properties.
-   assignBoth    — sets value AND replaces properties from the source.
-                   With a reference, clones value + subtree.
-                   Optional trailing { } merges overrides on top.
-   replaceProps  — replaces properties only; value unchanged.
-   mergeProps    — merges into existing properties; value unchanged.
-   definition    — creates a flag (exists with no value/properties),
+   assignValue   — sets the value. Existing properties are preserved.
+                   If the value includes properties, they are merged.
+   assignBoth    — sets the value AND replaces all existing properties.
+                   With a reference, clones the referenced subtree.
+                   If the value includes properties, they are merged
+                   on top of the replaced (or cloned) properties.
+   replaceProps  — replaces properties only; the value is unchanged.
+   mergeProps    — merges into existing properties; the value is unchanged.
+   definition    — creates a flag (exists with no value or properties),
                    or with "-" prefix, deletes a property.
    clearAll      — removes all properties from current scope.
    ================================================================ *)
@@ -36,8 +40,8 @@ statement       ::= assignValue
                   | clearAll
                   | definition
 
-assignValue     ::= propName "=" value [ properties ]
-assignBoth      ::= propName ":=" value [ properties ]
+assignValue     ::= propName "=" value
+assignBoth      ::= propName ":=" value
 replaceProps    ::= propName ":" properties
 mergeProps      ::= propName properties
 definition      ::= [ "-" ] propName
@@ -46,8 +50,20 @@ clearAll        ::= "-..."
 (* Property paths *)
 propName        ::= identifier { "." identifier }
 
-(* Values *)
-value           ::= array | boolean | none | envRef | date | number | string | reference
+(* ================================================================
+   Values
+   ================================================================
+   Every value in MOTLY can have properties. A value combines a
+   literal, array, or reference with optional properties.
+
+   In arrays, a property-only element (no literal, array, or
+   reference) is also valid — see arrayElement.
+   ================================================================ *)
+value           ::= literal [ properties ]
+                  | array [ properties ]
+                  | reference [ properties ]
+
+literal         ::= boolean | none | envRef | date | number | string
 
 boolean         ::= "@true" | "@false"
 none            ::= "@none"
@@ -76,14 +92,11 @@ minute          ::= digit digit
 second          ::= digit digit
 fraction        ::= digits
 
-(* Arrays *)
+(* Arrays — each element is a value, or properties alone *)
 array           ::= "[" [ arrayElements ] "]"
 arrayElements   ::= arrayElement { "," arrayElement } [ "," ]
-arrayElement    ::= scalarValue [ properties ]
+arrayElement    ::= value
                   | properties
-                  | array
-
-scalarValue     ::= boolean | none | envRef | date | number | string
 
 (* Properties block *)
 properties      ::= "{" statementList "}"

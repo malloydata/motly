@@ -3,9 +3,9 @@ use crate::error::{MOTLYError, Position};
 use crate::tree::*;
 use std::collections::BTreeMap;
 
-/// Execute a list of parsed statements against an existing MOTLYNode,
+/// Execute a list of parsed statements against an existing MOTLYDataNode,
 /// mutating it in place and returning any non-fatal errors.
-pub fn execute(statements: &[Statement], root: &mut MOTLYNode, parse_id: u32) -> Vec<MOTLYError> {
+pub fn execute(statements: &[Statement], root: &mut MOTLYDataNode, parse_id: u32) -> Vec<MOTLYError> {
     let mut errors = Vec::new();
     for stmt in statements {
         execute_statement(stmt, root, &mut errors, parse_id);
@@ -13,7 +13,7 @@ pub fn execute(statements: &[Statement], root: &mut MOTLYNode, parse_id: u32) ->
     errors
 }
 
-fn execute_statement(stmt: &Statement, node: &mut MOTLYNode, errors: &mut Vec<MOTLYError>, parse_id: u32) {
+fn execute_statement(stmt: &Statement, node: &mut MOTLYDataNode, errors: &mut Vec<MOTLYError>, parse_id: u32) {
     match stmt {
         Statement::SetEq {
             path,
@@ -51,7 +51,7 @@ fn make_location(parse_id: u32, span: Span) -> MOTLYLocation {
 }
 
 /// Set location on a node only if it doesn't already have one (first-appearance rule).
-fn set_first_location(node: &mut MOTLYNode, parse_id: u32, span: Span) {
+fn set_first_location(node: &mut MOTLYDataNode, parse_id: u32, span: Span) {
     if node.location.is_none() {
         node.location = Some(make_location(parse_id, span));
     }
@@ -60,10 +60,10 @@ fn set_first_location(node: &mut MOTLYNode, parse_id: u32, span: Span) {
 /// `name = value` — set eq, preserve existing properties.
 /// `name = value { props }` — set eq, then merge properties.
 ///
-/// Special case: `name = $ref` inserts a MOTLYPropertyValue::Ref directly.
+/// Special case: `name = $ref` inserts a MOTLYNode::Ref directly.
 /// `name = $ref { props }` produces a non-fatal error (ref created, props ignored).
 fn execute_set_eq(
-    node: &mut MOTLYNode,
+    node: &mut MOTLYDataNode,
     path: &[String],
     value: &TagValue,
     properties: Option<&[Statement]>,
@@ -71,7 +71,7 @@ fn execute_set_eq(
     parse_id: u32,
     span: Span,
 ) {
-    // Special case: reference value → insert as MOTLYPropertyValue::Ref
+    // Special case: reference value → insert as MOTLYNode::Ref
     if let TagValue::Scalar(ScalarValue::Reference { ups, path: ref_path }) = value {
         if properties.is_some() {
             let zero = Position {
@@ -100,8 +100,8 @@ fn execute_set_eq(
     // Get or create target (preserves existing node and its properties)
     let target_pv = props
         .entry(write_key)
-        .or_insert_with(MOTLYPropertyValue::new_node);
-    let target = target_pv.ensure_node();
+        .or_insert_with(MOTLYNode::new_data);
+    let target = target_pv.ensure_data_node();
 
     // Set location on first appearance
     set_first_location(target, parse_id, span);
@@ -122,7 +122,7 @@ fn execute_set_eq(
 /// `name := $ref` — clone the referenced subtree.
 /// `name := $ref { props }` — clone + replace properties.
 fn execute_assign_both(
-    node: &mut MOTLYNode,
+    node: &mut MOTLYDataNode,
     path: &[String],
     value: &TagValue,
     properties: Option<&[Statement]>,
@@ -152,7 +152,7 @@ fn execute_assign_both(
                 let (write_key, parent) = build_access_path(node, path, parse_id, span);
                 parent
                     .get_or_create_properties()
-                    .insert(write_key, MOTLYPropertyValue::Node(cloned));
+                    .insert(write_key, MOTLYNode::Data(cloned));
             }
             Err(err) => {
                 // Fatal clone error — push it and don't create the node
@@ -161,7 +161,7 @@ fn execute_assign_both(
         }
     } else {
         // Literal value: create fresh node (replaces everything)
-        let mut result = MOTLYNode::new();
+        let mut result = MOTLYDataNode::new();
         // := always sets a new location
         result.location = Some(make_location(parse_id, span));
         set_eq_slot(&mut result, value, errors, parse_id);
@@ -173,13 +173,13 @@ fn execute_assign_both(
         let (write_key, parent) = build_access_path(node, path, parse_id, span);
         parent
             .get_or_create_properties()
-            .insert(write_key, MOTLYPropertyValue::Node(result));
+            .insert(write_key, MOTLYNode::Data(result));
     }
 }
 
 /// `name: { props }` — preserve existing value, replace properties.
 fn execute_replace_properties(
-    node: &mut MOTLYNode,
+    node: &mut MOTLYDataNode,
     path: &[String],
     properties: &[Statement],
     errors: &mut Vec<MOTLYError>,
@@ -188,12 +188,12 @@ fn execute_replace_properties(
 ) {
     let (write_key, parent) = build_access_path(node, path, parse_id, span);
 
-    let mut result = MOTLYNode::new();
+    let mut result = MOTLYDataNode::new();
 
-    // Always preserve the existing value (if it's a node)
+    // Always preserve the existing value (if it's a data node)
     let parent_props = parent.get_or_create_properties();
     if let Some(existing_pv) = parent_props.get(&write_key) {
-        if let MOTLYPropertyValue::Node(existing) = existing_pv {
+        if let MOTLYNode::Data(existing) = existing_pv {
             result.eq = existing.eq.clone();
             // Preserve the existing location (first-appearance rule)
             result.location = existing.location;
@@ -210,11 +210,11 @@ fn execute_replace_properties(
         execute_statement(stmt, &mut result, errors, parse_id);
     }
 
-    parent_props.insert(write_key, MOTLYPropertyValue::Node(result));
+    parent_props.insert(write_key, MOTLYNode::Data(result));
 }
 
 fn execute_update_properties(
-    node: &mut MOTLYNode,
+    node: &mut MOTLYDataNode,
     path: &[String],
     properties: &[Statement],
     errors: &mut Vec<MOTLYError>,
@@ -228,8 +228,8 @@ fn execute_update_properties(
     // Get or create the target node (merging semantics - preserves existing)
     let target_pv = props
         .entry(write_key)
-        .or_insert_with(MOTLYPropertyValue::new_node);
-    let target = target_pv.ensure_node();
+        .or_insert_with(MOTLYNode::new_data);
+    let target = target_pv.ensure_data_node();
 
     // Set location on first appearance
     set_first_location(target, parse_id, span);
@@ -239,22 +239,22 @@ fn execute_update_properties(
     }
 }
 
-fn execute_define(node: &mut MOTLYNode, path: &[String], deleted: bool, parse_id: u32, span: Span) {
+fn execute_define(node: &mut MOTLYDataNode, path: &[String], deleted: bool, parse_id: u32, span: Span) {
     let (write_key, parent) = build_access_path(node, path, parse_id, span);
 
     if deleted {
-        let mut del_node = MOTLYNode::deleted();
+        let mut del_node = MOTLYDataNode::deleted();
         del_node.location = Some(make_location(parse_id, span));
         parent
             .get_or_create_properties()
-            .insert(write_key, MOTLYPropertyValue::Node(del_node));
+            .insert(write_key, MOTLYNode::Data(del_node));
     } else {
         // Get-or-create: if node already exists, leave it alone
         let props = parent.get_or_create_properties();
         if !props.contains_key(&write_key) {
-            let mut new_node = MOTLYNode::new();
+            let mut new_node = MOTLYDataNode::new();
             new_node.location = Some(make_location(parse_id, span));
-            props.insert(write_key, MOTLYPropertyValue::Node(new_node));
+            props.insert(write_key, MOTLYNode::Data(new_node));
         }
     }
 }
@@ -262,11 +262,11 @@ fn execute_define(node: &mut MOTLYNode, path: &[String], deleted: bool, parse_id
 /// Navigate to the parent of the final path segment, creating intermediate
 /// nodes as needed. Returns (final_key, parent_node).
 fn build_access_path<'a>(
-    node: &'a mut MOTLYNode,
+    node: &'a mut MOTLYDataNode,
     path: &[String],
     parse_id: u32,
     span: Span,
-) -> (String, &'a mut MOTLYNode) {
+) -> (String, &'a mut MOTLYDataNode) {
     assert!(!path.is_empty(), "path must not be empty");
 
     let mut current = node;
@@ -275,13 +275,13 @@ fn build_access_path<'a>(
         let props = current.get_or_create_properties();
 
         if !props.contains_key(segment) {
-            let mut intermediate = MOTLYNode::new();
+            let mut intermediate = MOTLYDataNode::new();
             intermediate.location = Some(make_location(parse_id, span));
-            props.insert(segment.clone(), MOTLYPropertyValue::Node(intermediate));
+            props.insert(segment.clone(), MOTLYNode::Data(intermediate));
         }
 
         let entry = props.get_mut(segment).unwrap();
-        current = entry.ensure_node();
+        current = entry.ensure_data_node();
         // Set location on intermediate nodes (first-appearance)
         set_first_location(current, parse_id, span);
     }
@@ -290,9 +290,9 @@ fn build_access_path<'a>(
 }
 
 /// Set the eq slot on a target node from a TagValue.
-/// References are NOT handled here — they become MOTLYPropertyValue::Ref
+/// References are NOT handled here — they become MOTLYNode::Ref
 /// at the caller level.
-fn set_eq_slot(target: &mut MOTLYNode, value: &TagValue, errors: &mut Vec<MOTLYError>, parse_id: u32) {
+fn set_eq_slot(target: &mut MOTLYDataNode, value: &TagValue, errors: &mut Vec<MOTLYError>, parse_id: u32) {
     match value {
         TagValue::Array(elements) => {
             target.eq = Some(EqValue::Array(resolve_array(elements, errors, parse_id)));
@@ -312,7 +312,7 @@ fn set_eq_slot(target: &mut MOTLYNode, value: &TagValue, errors: &mut Vec<MOTLYE
             }
             ScalarValue::Reference { .. } => {
                 // References are handled by the caller (execute_set_eq / resolve_array_element).
-                // They become MOTLYPropertyValue::Ref, not part of the eq slot.
+                // They become MOTLYNode::Ref, not part of the eq slot.
                 unreachable!("References should be handled before calling set_eq_slot");
             }
             ScalarValue::Env { name } => {
@@ -325,12 +325,12 @@ fn set_eq_slot(target: &mut MOTLYNode, value: &TagValue, errors: &mut Vec<MOTLYE
     }
 }
 
-/// Resolve an array of AST elements to MOTLYPropertyValues.
+/// Resolve an array of AST elements to MOTLYNodes.
 fn resolve_array(
     elements: &[ArrayElement],
     errors: &mut Vec<MOTLYError>,
     parse_id: u32,
-) -> Vec<MOTLYPropertyValue> {
+) -> Vec<MOTLYNode> {
     elements
         .iter()
         .map(|el| resolve_array_element(el, errors, parse_id))
@@ -341,8 +341,8 @@ fn resolve_array_element(
     el: &ArrayElement,
     errors: &mut Vec<MOTLYError>,
     parse_id: u32,
-) -> MOTLYPropertyValue {
-    // Check if the element value is a reference → becomes MOTLYPropertyValue::Ref
+) -> MOTLYNode {
+    // Check if the element value is a reference → becomes MOTLYNode::Ref
     if let Some(TagValue::Scalar(ScalarValue::Reference { ups, path })) = &el.value {
         if el.properties.is_some() {
             let zero = Position {
@@ -361,7 +361,7 @@ fn resolve_array_element(
         return make_ref(*ups, path);
     }
 
-    let mut node = MOTLYNode::new();
+    let mut node = MOTLYDataNode::new();
     node.location = Some(make_location(parse_id, el.span));
 
     if let Some(ref value) = el.value {
@@ -374,12 +374,12 @@ fn resolve_array_element(
         }
     }
 
-    MOTLYPropertyValue::Node(node)
+    MOTLYNode::Data(node)
 }
 
-/// Convert AST RefPathSegments to tree RefSegments and build a MOTLYPropertyValue::Ref.
-fn make_ref(ups: usize, path: &[RefPathSegment]) -> MOTLYPropertyValue {
-    MOTLYPropertyValue::Ref {
+/// Convert AST RefPathSegments to tree RefSegments and build a MOTLYNode::Ref.
+fn make_ref(ups: usize, path: &[RefPathSegment]) -> MOTLYNode {
+    MOTLYNode::Ref {
         link_to: convert_segments(path),
         link_ups: ups,
     }
@@ -397,14 +397,14 @@ fn convert_segments(path: &[RefPathSegment]) -> Vec<RefSegment> {
 
 /// Resolve a reference path in the tree and return a deep clone.
 fn resolve_and_clone(
-    root: &MOTLYNode,
+    root: &MOTLYDataNode,
     stmt_path: &[String],
     ups: usize,
     ref_path: &[RefPathSegment],
-) -> Result<MOTLYNode, MOTLYError> {
+) -> Result<MOTLYDataNode, MOTLYError> {
     let ref_str = format_ref_display(ups, &convert_segments(ref_path));
 
-    let start: &MOTLYNode;
+    let start: &MOTLYDataNode;
 
     if ups == 0 {
         // Absolute reference: start at root
@@ -424,8 +424,8 @@ fn resolve_and_clone(
                         .as_ref()
                         .and_then(|p| p.get(&stmt_path[i]))
                     {
-                        Some(MOTLYPropertyValue::Node(child)) => current = child,
-                        Some(MOTLYPropertyValue::Ref { .. }) => {
+                        Some(MOTLYNode::Data(child)) => current = child,
+                        Some(MOTLYNode::Ref { .. }) => {
                             return Err(clone_error(format!(
                                 "Clone reference {} could not be resolved: path segment \"{}\" is a link reference",
                                 ref_str, stmt_path[i]
@@ -462,8 +462,8 @@ fn resolve_and_clone(
                     .as_ref()
                     .and_then(|p| p.get(name.as_str()))
                 {
-                    Some(MOTLYPropertyValue::Node(child)) => current = child,
-                    Some(MOTLYPropertyValue::Ref { .. }) => {
+                    Some(MOTLYNode::Data(child)) => current = child,
+                    Some(MOTLYNode::Ref { .. }) => {
                         return Err(clone_error(format!(
                             "Clone reference {} could not be resolved: property \"{}\" is a link reference",
                             ref_str, name
@@ -487,8 +487,8 @@ fn resolve_and_clone(
                             )));
                         }
                         match &arr[*idx] {
-                            MOTLYPropertyValue::Node(child) => current = child,
-                            MOTLYPropertyValue::Ref { .. } => {
+                            MOTLYNode::Data(child) => current = child,
+                            MOTLYNode::Ref { .. } => {
                                 return Err(clone_error(format!(
                                     "Clone reference {} could not be resolved: index [{}] is a link reference",
                                     ref_str, idx
@@ -527,7 +527,7 @@ fn clone_error(message: String) -> MOTLYError {
 /// Walk a cloned subtree and null out any relative (^) references that
 /// escape the clone boundary. A reference at depth D with N ups escapes
 /// if N > D. Absolute references (ups=0) are left alone.
-fn sanitize_cloned_refs(node: &mut MOTLYNode, depth: usize, errors: &mut Vec<MOTLYError>) {
+fn sanitize_cloned_refs(node: &mut MOTLYDataNode, depth: usize, errors: &mut Vec<MOTLYError>) {
     if let Some(EqValue::Array(ref mut arr)) = node.eq {
         for elem in arr.iter_mut() {
             sanitize_cloned_pv(elem, depth + 1, errors);
@@ -541,14 +541,14 @@ fn sanitize_cloned_refs(node: &mut MOTLYNode, depth: usize, errors: &mut Vec<MOT
     }
 }
 
-/// Sanitize a single MOTLYPropertyValue within a cloned subtree.
+/// Sanitize a single MOTLYNode within a cloned subtree.
 fn sanitize_cloned_pv(
-    pv: &mut MOTLYPropertyValue,
+    pv: &mut MOTLYNode,
     depth: usize,
     errors: &mut Vec<MOTLYError>,
 ) {
     match pv {
-        MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
+        MOTLYNode::Ref { ref link_to, link_ups } => {
             let ups = *link_ups;
             if ups > 0 && ups > depth {
                 let display = format_ref_display(ups, link_to);
@@ -567,10 +567,10 @@ fn sanitize_cloned_pv(
                     end: zero,
                 });
                 // Convert to empty node
-                *pv = MOTLYPropertyValue::Node(MOTLYNode::new());
+                *pv = MOTLYNode::Data(MOTLYDataNode::new());
             }
         }
-        MOTLYPropertyValue::Node(node) => {
+        MOTLYNode::Data(node) => {
             sanitize_cloned_refs(node, depth, errors);
         }
     }

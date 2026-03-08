@@ -23,11 +23,10 @@ pub enum Scalar {
 }
 
 /// The value of a node's `eq` field: scalar, array, or env ref.
-/// References are NOT in eq — they are a separate `MOTLYPropertyValue` variant.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EqValue {
     Scalar(Scalar),
-    Array(Vec<MOTLYPropertyValue>),
+    Array(Vec<MOTLYNode>),
     /// An environment variable reference: `{ "env": "NAME" }`
     EnvRef(String),
 }
@@ -39,13 +38,13 @@ pub enum RefSegment {
     Index(usize),
 }
 
-/// What a property or array element leads to: either a node or a link reference.
+/// What a property or array element leads to: either a data node or a link reference.
 ///
-/// A `Ref` means "this IS that other node" — no own value, no own properties.
-/// A `Node` is a full node with optional eq, properties, and deleted flag.
+/// This is the union type that appears everywhere in the tree: as property values,
+/// array elements, and at any position where a node might be a reference instead.
 #[derive(Debug, Clone, PartialEq)]
-pub enum MOTLYPropertyValue {
-    Node(MOTLYNode),
+pub enum MOTLYNode {
+    Data(MOTLYDataNode),
     /// A structured reference to another node.
     Ref {
         link_to: Vec<RefSegment>,
@@ -53,19 +52,19 @@ pub enum MOTLYPropertyValue {
     },
 }
 
-/// A node in the MOTLY output tree (has eq, properties, deleted).
+/// A concrete node in the MOTLY output tree (has eq, properties, deleted).
 #[derive(Debug, Clone, PartialEq)]
-pub struct MOTLYNode {
+pub struct MOTLYDataNode {
     pub eq: Option<EqValue>,
-    pub properties: Option<BTreeMap<String, MOTLYPropertyValue>>,
+    pub properties: Option<BTreeMap<String, MOTLYNode>>,
     pub deleted: bool,
     /// Source location of this node's first appearance.
     pub location: Option<MOTLYLocation>,
 }
 
-impl MOTLYNode {
+impl MOTLYDataNode {
     pub fn new() -> Self {
-        MOTLYNode {
+        MOTLYDataNode {
             eq: None,
             properties: None,
             deleted: false,
@@ -74,7 +73,7 @@ impl MOTLYNode {
     }
 
     pub fn with_eq(eq: EqValue) -> Self {
-        MOTLYNode {
+        MOTLYDataNode {
             eq: Some(eq),
             properties: None,
             deleted: false,
@@ -83,7 +82,7 @@ impl MOTLYNode {
     }
 
     pub fn deleted() -> Self {
-        MOTLYNode {
+        MOTLYDataNode {
             eq: None,
             properties: None,
             deleted: true,
@@ -92,7 +91,7 @@ impl MOTLYNode {
     }
 
     /// Get or create the properties map.
-    pub fn get_or_create_properties(&mut self) -> &mut BTreeMap<String, MOTLYPropertyValue> {
+    pub fn get_or_create_properties(&mut self) -> &mut BTreeMap<String, MOTLYNode> {
         self.properties.get_or_insert_with(BTreeMap::new)
     }
 
@@ -112,41 +111,41 @@ impl MOTLYNode {
     }
 }
 
-impl MOTLYPropertyValue {
-    /// Create a new empty node property value.
-    pub fn new_node() -> Self {
-        MOTLYPropertyValue::Node(MOTLYNode::new())
+impl MOTLYNode {
+    /// Create a new empty data node wrapped in MOTLYNode::Data.
+    pub fn new_data() -> Self {
+        MOTLYNode::Data(MOTLYDataNode::new())
     }
 
-    /// Check if this property value is a link reference.
+    /// Check if this is a link reference.
     pub fn is_ref(&self) -> bool {
-        matches!(self, MOTLYPropertyValue::Ref { .. })
+        matches!(self, MOTLYNode::Ref { .. })
     }
 
-    /// Get a reference to the inner node, if this is a Node variant.
-    pub fn as_node(&self) -> Option<&MOTLYNode> {
+    /// Get a reference to the inner data node, if this is a Data variant.
+    pub fn as_data_node(&self) -> Option<&MOTLYDataNode> {
         match self {
-            MOTLYPropertyValue::Node(n) => Some(n),
-            MOTLYPropertyValue::Ref { .. } => None,
+            MOTLYNode::Data(n) => Some(n),
+            MOTLYNode::Ref { .. } => None,
         }
     }
 
-    /// Get a mutable reference to the inner node, if this is a Node variant.
-    pub fn as_node_mut(&mut self) -> Option<&mut MOTLYNode> {
+    /// Get a mutable reference to the inner data node, if this is a Data variant.
+    pub fn as_data_node_mut(&mut self) -> Option<&mut MOTLYDataNode> {
         match self {
-            MOTLYPropertyValue::Node(n) => Some(n),
-            MOTLYPropertyValue::Ref { .. } => None,
+            MOTLYNode::Data(n) => Some(n),
+            MOTLYNode::Ref { .. } => None,
         }
     }
 
-    /// Convert a Ref to an empty Node (for intermediate path traversal).
-    /// If already a Node, does nothing. Returns a mutable reference to the inner node.
-    pub fn ensure_node(&mut self) -> &mut MOTLYNode {
-        if matches!(self, MOTLYPropertyValue::Ref { .. }) {
-            *self = MOTLYPropertyValue::Node(MOTLYNode::new());
+    /// Convert a Ref to an empty Data node (for intermediate path traversal).
+    /// If already a Data node, does nothing. Returns a mutable reference to the inner data node.
+    pub fn ensure_data_node(&mut self) -> &mut MOTLYDataNode {
+        if matches!(self, MOTLYNode::Ref { .. }) {
+            *self = MOTLYNode::Data(MOTLYDataNode::new());
         }
         match self {
-            MOTLYPropertyValue::Node(n) => n,
+            MOTLYNode::Data(n) => n,
             _ => unreachable!(),
         }
     }
@@ -178,7 +177,7 @@ pub fn format_ref_display(ups: usize, segments: &[RefSegment]) -> String {
     s
 }
 
-impl Default for MOTLYNode {
+impl Default for MOTLYDataNode {
     fn default() -> Self {
         Self::new()
     }

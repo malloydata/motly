@@ -178,6 +178,77 @@ describe("Mot", () => {
       const b = mot("flags = [@true, @false]").get("flags").booleans;
       assert.deepStrictEqual(b, [true, false]);
     });
+
+    it("dates convenience accessor", () => {
+      const d = mot("x = [@2024-01-15, @2024-06-01]").get("x").dates;
+      assert.ok(d);
+      assert.equal(d!.length, 2);
+      assert.ok(d![0] instanceof Date);
+      assert.ok(d![1] instanceof Date);
+    });
+
+    it("dates returns undefined for non-date elements", () => {
+      assert.equal(mot("x = [@2024-01-15, hello]").get("x").dates, undefined);
+    });
+
+    it("texts works when elements have properties", () => {
+      const m = mot('x = ["a" { p = 1 }, "b" { q = 2 }]');
+      assert.deepStrictEqual(m.get("x").texts, ["a", "b"]);
+      const vals = m.get("x").values!;
+      assert.equal(vals[0].get("p").number, 1);
+      assert.equal(vals[1].get("q").number, 2);
+    });
+
+    it("numbers works when elements have properties", () => {
+      const m = mot("x = [10 { unit = ms }, 20 { unit = s }]");
+      assert.deepStrictEqual(m.get("x").numbers, [10, 20]);
+    });
+
+    it("texts returns undefined when any element is property-only", () => {
+      const m = mot('x = ["a", { p = 1 }]');
+      assert.equal(m.get("x").texts, undefined);
+    });
+
+    it("property-only array elements have no typed value", () => {
+      const m = mot("x = [{ name = alice }]");
+      const vals = m.get("x").values!;
+      assert.equal(vals[0].text, undefined);
+      assert.equal(vals[0].valueType, undefined);
+      assert.equal(vals[0].get("name").text, "alice");
+    });
+
+    it("reference elements resolve for convenience accessors", () => {
+      const m = mot("target = hello\nlist = [$target, world]");
+      assert.deepStrictEqual(m.get("list").texts, ["hello", "world"]);
+    });
+
+    it("numbers returns undefined for mixed types", () => {
+      assert.equal(mot("x = [1, hello]").get("x").numbers, undefined);
+    });
+
+    it("booleans returns undefined for mixed types", () => {
+      assert.equal(mot("x = [@true, 1]").get("x").booleans, undefined);
+    });
+
+    it("empty array returns empty convenience arrays", () => {
+      const m = mot("x = []");
+      assert.deepStrictEqual(m.get("x").texts, []);
+      assert.deepStrictEqual(m.get("x").numbers, []);
+      assert.deepStrictEqual(m.get("x").booleans, []);
+      assert.deepStrictEqual(m.get("x").dates, []);
+    });
+
+    it("nested arrays: outer values are arrays, not scalars", () => {
+      const m = mot("x = [[1, 2], [3, 4]]");
+      const outer = m.get("x").values!;
+      assert.equal(outer.length, 2);
+      assert.equal(outer[0].valueType, "array");
+      assert.deepStrictEqual(outer[0].numbers, [1, 2]);
+      assert.deepStrictEqual(outer[1].numbers, [3, 4]);
+      // outer convenience accessors don't work (elements are arrays, not scalars)
+      assert.equal(m.get("x").numbers, undefined);
+      assert.equal(m.get("x").texts, undefined);
+    });
   });
 
   describe("property enumeration", () => {

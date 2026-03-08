@@ -314,7 +314,7 @@ impl<'a> Parser<'a> {
         }
         if self.starts_with("env.") {
             self.advance(4); // skip "env."
-            let name = self.parse_bare_string()?;
+            let name = self.parse_identifier()?;
             return Ok(ScalarValue::Env { name });
         }
         // Must start with a digit to be a date
@@ -979,11 +979,21 @@ impl<'a> Parser<'a> {
             }
             Some('[') => {
                 let elements = self.parse_array()?;
-                Ok(ArrayElement {
-                    value: Some(TagValue::Array(elements)),
-                    properties: None,
-                    span: Span { begin, end: self.position() },
-                })
+                self.skip_ws();
+                if self.peek_char() == Some('{') {
+                    let props = self.parse_properties_block()?;
+                    Ok(ArrayElement {
+                        value: Some(TagValue::Array(elements)),
+                        properties: Some(props),
+                        span: Span { begin, end: self.position() },
+                    })
+                } else {
+                    Ok(ArrayElement {
+                        value: Some(TagValue::Array(elements)),
+                        properties: None,
+                        span: Span { begin, end: self.position() },
+                    })
+                }
             }
             _ => {
                 let value = self.parse_eq_value(false)?;

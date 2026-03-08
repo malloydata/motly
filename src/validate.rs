@@ -27,21 +27,21 @@ pub struct SchemaError {
 /// Validate that every reference in the tree resolves to an existing node.
 ///
 /// Returns an empty vec when all references are valid.
-pub fn validate_references(root: &MOTLYNode) -> Vec<ValidationError> {
+pub fn validate_references(root: &MOTLYDataNode) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let mut path: Vec<String> = Vec::new();
-    let mut ancestors: Vec<&MOTLYNode> = vec![root];
+    let mut ancestors: Vec<&MOTLYDataNode> = vec![root];
     walk_refs(root, &mut path, &mut ancestors, root, &mut errors);
     errors
 }
 
 /// Recursive walk collecting reference errors.
-/// References now live as `MOTLYPropertyValue::Ref` in properties and arrays.
+/// References now live as `MOTLYNode::Ref` in properties and arrays.
 fn walk_refs<'a>(
-    node: &'a MOTLYNode,
+    node: &'a MOTLYDataNode,
     path: &mut Vec<String>,
-    ancestors: &mut Vec<&'a MOTLYNode>,
-    root: &'a MOTLYNode,
+    ancestors: &mut Vec<&'a MOTLYDataNode>,
+    root: &'a MOTLYDataNode,
     errors: &mut Vec<ValidationError>,
 ) {
     // Check array elements in eq
@@ -55,7 +55,7 @@ fn walk_refs<'a>(
             path.push(key.clone());
 
             match child_pv {
-                MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
+                MOTLYNode::Ref { ref link_to, link_ups } => {
                     // This property is a reference — check it
                     if let Some(err_msg) = check_link(link_to, *link_ups, ancestors, root) {
                         errors.push(ValidationError {
@@ -65,7 +65,7 @@ fn walk_refs<'a>(
                         });
                     }
                 }
-                MOTLYPropertyValue::Node(child) => {
+                MOTLYNode::Data(child) => {
                     // Recurse into child for arrays and sub-properties
                     ancestors.push(node);
                     walk_refs(child, path, ancestors, root, errors);
@@ -80,11 +80,11 @@ fn walk_refs<'a>(
 
 /// Walk array elements looking for references.
 fn walk_array_refs<'a>(
-    arr: &'a [MOTLYPropertyValue],
+    arr: &'a [MOTLYNode],
     path: &mut Vec<String>,
-    ancestors: &mut Vec<&'a MOTLYNode>,
-    parent_node: &'a MOTLYNode,
-    root: &'a MOTLYNode,
+    ancestors: &mut Vec<&'a MOTLYDataNode>,
+    parent_node: &'a MOTLYDataNode,
+    root: &'a MOTLYDataNode,
     errors: &mut Vec<ValidationError>,
 ) {
     for (i, elem_pv) in arr.iter().enumerate() {
@@ -92,7 +92,7 @@ fn walk_array_refs<'a>(
         path.push(idx_key);
 
         match elem_pv {
-            MOTLYPropertyValue::Ref { ref link_to, link_ups } => {
+            MOTLYNode::Ref { ref link_to, link_ups } => {
                 if let Some(err_msg) = check_link(link_to, *link_ups, ancestors, root) {
                     errors.push(ValidationError {
                         message: err_msg,
@@ -101,7 +101,7 @@ fn walk_array_refs<'a>(
                     });
                 }
             }
-            MOTLYPropertyValue::Node(elem) => {
+            MOTLYNode::Data(elem) => {
                 // Recurse into element for its own arrays and properties
                 ancestors.push(parent_node);
                 walk_refs(elem, path, ancestors, root, errors);
@@ -114,7 +114,7 @@ fn walk_array_refs<'a>(
 }
 
 /// Check whether a link resolves. Returns `Some(error_message)` on failure.
-fn check_link(segments: &[RefSegment], ups: usize, ancestors: &[&MOTLYNode], root: &MOTLYNode) -> Option<String> {
+fn check_link(segments: &[RefSegment], ups: usize, ancestors: &[&MOTLYDataNode], root: &MOTLYDataNode) -> Option<String> {
     let link_str = format_ref_display(ups, segments);
 
     // Determine the start node for resolution.
@@ -137,7 +137,7 @@ fn check_link(segments: &[RefSegment], ups: usize, ancestors: &[&MOTLYNode], roo
 }
 
 /// Follow path segments from a start node. Returns Some(error) if unresolved.
-fn resolve_path(start: &MOTLYNode, segments: &[RefSegment], link_str: &str) -> Option<String> {
+fn resolve_path(start: &MOTLYDataNode, segments: &[RefSegment], link_str: &str) -> Option<String> {
     let mut current: ResolveTarget = ResolveTarget::Node(start);
 
     for seg in segments {
@@ -145,10 +145,10 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSegment], link_str: &str) -> O
             (RefSegment::Name(name), ResolveTarget::Node(node)) => {
                 match &node.properties {
                     Some(props) => match props.get(name.as_str()) {
-                        Some(MOTLYPropertyValue::Ref { .. }) => {
+                        Some(MOTLYNode::Ref { .. }) => {
                             current = ResolveTarget::Terminal;
                         }
-                        Some(MOTLYPropertyValue::Node(child)) => {
+                        Some(MOTLYNode::Data(child)) => {
                             current = ResolveTarget::Node(child);
                         }
                         None => {
@@ -175,10 +175,10 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSegment], link_str: &str) -> O
                             ));
                     }
                     match &arr[*idx] {
-                        MOTLYPropertyValue::Ref { .. } => {
+                        MOTLYNode::Ref { .. } => {
                             current = ResolveTarget::Terminal;
                         }
-                        MOTLYPropertyValue::Node(elem) => {
+                        MOTLYNode::Data(elem) => {
                             current = ResolveTarget::Node(elem);
                         }
                     }
@@ -203,7 +203,7 @@ fn resolve_path(start: &MOTLYNode, segments: &[RefSegment], link_str: &str) -> O
 }
 
 enum ResolveTarget<'a> {
-    Node(&'a MOTLYNode),
+    Node(&'a MOTLYDataNode),
     Terminal,
 }
 
@@ -213,6 +213,6 @@ enum ResolveTarget<'a> {
 ///
 /// TODO: Re-implement with new ALL-CAPS schema language (see docs/schema_spec.md).
 /// Currently a no-op that always returns no errors.
-pub fn validate_schema(_tag: &MOTLYNode, _schema: &MOTLYNode) -> Vec<SchemaError> {
+pub fn validate_schema(_tag: &MOTLYDataNode, _schema: &MOTLYDataNode) -> Vec<SchemaError> {
     Vec::new()
 }

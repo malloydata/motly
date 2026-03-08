@@ -7,13 +7,13 @@ export type {
   MOTLYEnvRef,
   MOTLYValue,
   MOTLYNode,
-  MOTLYPropertyValue,
+  MOTLYDataNode,
   MOTLYError,
   MOTLYSchemaError,
   MOTLYValidationError,
 } from "../../interface/src/types";
 
-export { isRef, isEnvRef, formatRef } from "../../interface/src/types";
+export { isRef, isDataNode, isEnvRef, formatRef } from "../../interface/src/types";
 
 export type { Mot, GetMotOptions } from "./mot";
 export { MOTLYSession } from "./session";

@@ -20,7 +20,7 @@ src/
   ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment, Span
   parser.rs        — Recursive descent parser, produces Vec<Statement> with source spans
   interpreter.rs   — Executes statements against a MOTLYNode tree (mutates in place), sets source locations
-  tree.rs          — Output types: MOTLYNode, MOTLYPropertyValue, Scalar, EqValue, MOTLYLocation
+  tree.rs          — Output types: MOTLYNode (enum: Data|Ref), MOTLYDataNode, Scalar, EqValue, MOTLYLocation
   validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
   json.rs          — JSON serialization (compact, pretty, wire format with $date)
@@ -32,7 +32,7 @@ src/
 bindings/typescript/
   interface/           — "motly-ts-interface" package (shared types, private)
     src/
-      types.ts         — TypeScript types (MOTLYNode, MOTLYPropertyValue, MOTLYRef, MOTLYLocation, MOTLYParseResult, etc.)
+      types.ts         — TypeScript types (MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYLocation, MOTLYParseResult, etc.)
 
   parser/              — "@malloydata/motly-ts-parser" npm package (pure TypeScript)
     src/
@@ -42,9 +42,10 @@ bindings/typescript/
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
       validate.ts      — TypeScript port of src/validate.rs (~810 lines)
-      resolve.ts       — Tree resolver: follows refs, resolves env, produces plain JS values
+      mot.ts           — Mot API: resolved read-only view of MOTLY tree
+      clone.ts         — Deep clone helpers for MOTLYNode trees
     test/test.ts       — fixture-driven tests + hand-written tests
-    test/resolve.test.ts — Tests for resolve()
+    test/mot.test.ts   — Tests for Mot API
 
 docs/
   language.md                — Complete MOTLY language reference with EBNF grammar
@@ -97,9 +98,9 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
 - `ArrayElement` — value + optional properties + `Span`
 
 **Output tree** (public API):
-- `MOTLYNode` — has optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYPropertyValue`), optional `deleted` flag, optional `location` (source location from first appearance)
-- `MOTLYPropertyValue` — either a `MOTLYNode` or a structured link reference (`MOTLYPropertyValue::Ref { link_to: Vec<RefSegment>, link_ups: usize }` in Rust, `{ linkTo: MOTLYRefSegment[], linkUps: number }` in TS)
-- Link references (`$ref`) are a `MOTLYPropertyValue` variant — they replace the entire node (no own eq or properties). `link_to` holds parsed path segments (names and indices), `link_ups` holds the number of `^` levels for relative refs (0 for absolute)
+- `MOTLYNode` — the union type: either a `MOTLYDataNode` (concrete node) or a `Ref` (link reference). In Rust this is `enum MOTLYNode { Data(MOTLYDataNode), Ref { link_to, link_ups } }`. In TS it's `type MOTLYNode = MOTLYDataNode | MOTLYRef`.
+- `MOTLYDataNode` — a concrete node with optional `eq` (scalar/array/env-ref), optional `properties` (map of `MOTLYNode`), optional `deleted` flag, optional `location` (source location from first appearance)
+- Link references (`$ref`) are a `MOTLYNode` variant — they replace the entire node (no own eq or properties). `link_to` holds parsed path segments (names and indices), `link_ups` holds the number of `^` levels for relative refs (0 for absolute)
 - Environment refs (`@env.NAME`) live in `eq` as `EqValue::EnvRef` (Rust) or `{ env }` (TS) — they are values, so a node can have an env ref AND properties
 
 The interpreter mutates the `MOTLYNode` tree in place (does not return a new value).
@@ -154,11 +155,10 @@ class MOTLYSession {
   parse(source: string): MOTLYParseResult;        // parse + apply to value, returns { parseId, errors }
   parseSchema(source: string): MOTLYParseResult;  // parse as schema, returns { parseId, errors }
   reset(): void;                                   // clear value, keep schema (parseId counter continues)
-  getValue(): MOTLYNode;                           // deep clone of current value (includes locations)
+  getValue(): MOTLYDataNode;                       // deep clone of current value (includes locations)
+  getMot(options?: GetMotOptions): Mot;            // resolved read-only view of the value tree
   validateSchema(): MOTLYSchemaError[];            // validate value against schema
   validateReferences(): MOTLYValidationError[];    // check all $-references resolve
-  resolve(options?: { env?: Record<string, string | undefined> }): unknown;
-                                                   // resolve tree to plain JS (TS only)
   dispose(): void;                                 // free resources / mark dead
 }
 ```

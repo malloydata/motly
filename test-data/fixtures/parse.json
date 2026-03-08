@@ -140,5 +140,8 @@
 
   {"name": "bare name preserves existing node", "input": ["foo = hello { a b c }", "foo"], "expected": {"properties": {"foo": {"eq": "hello", "properties": {"a": {}, "b": {}, "c": {}}}}}},
   {"name": "bare name preserves value only", "input": ["x = 42", "x"], "expected": {"properties": {"x": {"eq": 42}}}},
-  {"name": "bare name creates new if absent", "input": "newnode", "expected": {"properties": {"newnode": {}}}}
+  {"name": "bare name creates new if absent", "input": "newnode", "expected": {"properties": {"newnode": {}}}},
+
+  {"name": "env reference backtick identifier", "input": "key = @env.`complex-name`", "expected": {"properties": {"key": {"eq": {"env": "complex-name"}}}}},
+  {"name": "nested array with properties", "input": "x = [[a, b] { tag = 1 }]", "expected": {"properties": {"x": {"eq": [{"eq": [{"eq": "a"}, {"eq": "b"}], "properties": {"tag": {"eq": 1}}}]}}}}
 ]

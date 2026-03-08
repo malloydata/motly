@@ -8,7 +8,7 @@ pub mod tree;
 pub mod validate;
 
 use error::MOTLYError;
-use tree::MOTLYNode;
+use tree::MOTLYDataNode;
 
 pub use validate::{validate_references, validate_schema, SchemaError, ValidationError};
 
@@ -16,13 +16,13 @@ pub use validate::{validate_references, validate_schema, SchemaError, Validation
 
 /// The result of parsing MOTLY source.
 pub struct MOTLYResult {
-    pub value: MOTLYNode,
+    pub value: MOTLYDataNode,
     pub errors: Vec<MOTLYError>,
 }
 
 /// Parse MOTLY source and execute statements against the given value,
 /// returning the updated value and any errors (parse errors + non-fatal execution errors).
-pub fn parse_motly(input: &str, mut value: MOTLYNode, parse_id: u32) -> MOTLYResult {
+pub fn parse_motly(input: &str, mut value: MOTLYDataNode, parse_id: u32) -> MOTLYResult {
     match parser::parse(input) {
         Ok(stmts) => {
             let exec_errors = interpreter::execute(&stmts, &mut value, parse_id);
@@ -63,8 +63,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 struct Session {
-    value: MOTLYNode,
-    schema: Option<MOTLYNode>,
+    value: MOTLYDataNode,
+    schema: Option<MOTLYDataNode>,
     next_parse_id: u32,
 }
 
@@ -86,7 +86,7 @@ fn next_id() -> u32 {
     })
 }
 
-/// Create a new session holding an empty MOTLYNode. Returns a session ID.
+/// Create a new session holding an empty MOTLYDataNode. Returns a session ID.
 #[no_mangle]
 pub extern "C" fn wasm_session_new() -> u32 {
     let id = next_id();
@@ -94,7 +94,7 @@ pub extern "C" fn wasm_session_new() -> u32 {
         s.insert(
             id,
             Session {
-                value: MOTLYNode::new(),
+                value: MOTLYDataNode::new(),
                 schema: None,
                 next_parse_id: 0,
             },
@@ -119,12 +119,12 @@ pub unsafe extern "C" fn wasm_session_parse(
         Some(session) => {
             let pid = session.next_parse_id;
             session.next_parse_id += 1;
-            Some((std::mem::replace(&mut session.value, MOTLYNode::new()), pid))
+            Some((std::mem::replace(&mut session.value, MOTLYDataNode::new()), pid))
         }
         None => None,
     })
     .unwrap_or_else(|| {
-        return (MOTLYNode::new(), 0);
+        return (MOTLYDataNode::new(), 0);
     });
     let result = parse_motly(input, value, parse_id);
     with_sessions(|s| {
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
         }
         None => 0,
     });
-    let result = parse_motly(input, MOTLYNode::new(), parse_id);
+    let result = parse_motly(input, MOTLYDataNode::new(), parse_id);
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.schema = Some(result.value);
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
 pub extern "C" fn wasm_session_reset(id: u32) {
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
-            session.value = MOTLYNode::new();
+            session.value = MOTLYDataNode::new();
         }
     });
 }
@@ -235,7 +235,7 @@ fn string_to_c_ptr(s: String) -> *const u8 {
 
 /// Convenience wrapper for tests: parse_motly with parse_id=0.
 #[cfg(test)]
-fn parse_motly_0(input: &str, value: MOTLYNode) -> MOTLYResult {
+fn parse_motly_0(input: &str, value: MOTLYDataNode) -> MOTLYResult {
     parse_motly(input, value, 0)
 }
 

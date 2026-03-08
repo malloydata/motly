@@ -1,5 +1,6 @@
 import {
   MOTLYNode,
+  MOTLYDataNode,
   MOTLYError,
   MOTLYParseResult,
   MOTLYSchemaError,
@@ -18,8 +19,8 @@ import { Mot, GetMotOptions, buildMot } from "./mot";
  * API-compatible with the Rust `MotlySession`.
  */
 export class MOTLYSession {
-  private value: MOTLYNode = {};
-  private schema: MOTLYNode | null = null;
+  private value: MOTLYDataNode = {};
+  private schema: MOTLYDataNode | null = null;
   private disposed = false;
   private nextParseId = 0;
 
@@ -49,7 +50,7 @@ export class MOTLYSession {
     const parseId = this.nextParseId++;
     try {
       const stmts = parse(source);
-      const fresh: MOTLYNode = {};
+      const fresh: MOTLYDataNode = {};
       const errors = execute(stmts, fresh, parseId);
       this.schema = fresh;
       return { parseId, errors };
@@ -70,7 +71,7 @@ export class MOTLYSession {
   /**
    * Return a deep clone of the session's current value.
    */
-  getValue(): MOTLYNode {
+  getValue(): MOTLYDataNode {
     this.ensureAlive();
     return cloneNode(this.value);
   }

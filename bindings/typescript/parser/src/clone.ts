@@ -1,8 +1,8 @@
-import { MOTLYNode, MOTLYPropertyValue, isRef, isEnvRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, isRef, isEnvRef } from "../../interface/src/types";
 
-/** Deep clone a MOTLYNode. */
-export function cloneNode(value: MOTLYNode): MOTLYNode {
-  const result: MOTLYNode = {};
+/** Deep clone a MOTLYDataNode. */
+export function cloneNode(value: MOTLYDataNode): MOTLYDataNode {
+  const result: MOTLYDataNode = {};
 
   if (value.deleted) result.deleted = true;
 
@@ -10,7 +10,7 @@ export function cloneNode(value: MOTLYNode): MOTLYNode {
     if (value.eq instanceof Date) {
       result.eq = new Date(value.eq.getTime());
     } else if (Array.isArray(value.eq)) {
-      result.eq = value.eq.map(clonePropertyValue);
+      result.eq = value.eq.map(cloneMotlyNode);
     } else if (isEnvRef(value.eq)) {
       result.eq = { env: value.eq.env };
     } else {
@@ -19,9 +19,9 @@ export function cloneNode(value: MOTLYNode): MOTLYNode {
   }
 
   if (value.properties) {
-    const props: Record<string, MOTLYPropertyValue> = {};
+    const props: Record<string, MOTLYNode> = {};
     for (const key of Object.keys(value.properties)) {
-      props[key] = clonePropertyValue(value.properties[key]);
+      props[key] = cloneMotlyNode(value.properties[key]);
     }
     result.properties = props;
   }
@@ -37,13 +37,16 @@ export function cloneNode(value: MOTLYNode): MOTLYNode {
   return result;
 }
 
-/** Deep clone a MOTLYPropertyValue (either a node or a ref). */
-export function clonePropertyValue(pv: MOTLYPropertyValue): MOTLYPropertyValue {
-  if (isRef(pv)) {
-    return { linkTo: [...pv.linkTo], linkUps: pv.linkUps };
+/** Deep clone a MOTLYNode (either a data node or a ref). */
+export function cloneMotlyNode(node: MOTLYNode): MOTLYNode {
+  if (isRef(node)) {
+    return { linkTo: [...node.linkTo], linkUps: node.linkUps };
   }
-  return cloneNode(pv);
+  return cloneNode(node);
 }
 
 /** @deprecated Use cloneNode instead. */
 export const cloneValue = cloneNode;
+
+/** @deprecated Use cloneMotlyNode instead. */
+export const clonePropertyValue = cloneMotlyNode;
