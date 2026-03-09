@@ -19,13 +19,13 @@ Both the Rust library and the TS parser expose an identical `MOTLYSession` API. 
 src/
   ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment, Span
   parser.rs        — Recursive descent parser, produces Vec<Statement> with source spans
-  interpreter.rs   — Executes statements against a MOTLYNode tree (mutates in place), sets source locations
+  interpreter.rs   — Executes statements against a MOTLYNode tree (mutates in place), sets source locations; defines SessionOptions + ExecContext
   tree.rs          — Output types: MOTLYNode (enum: Data|Ref), MOTLYDataNode, Scalar, EqValue, MOTLYLocation
   validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
   json.rs          — JSON serialization (compact, pretty, wire format with $date)
   from_json.rs     — JSON deserialization, wire format parsing
-  lib.rs           — Public API: parse_motly(), WASM FFI session functions
+  lib.rs           — Public API: parse_motly(), ExecContext, WASM FFI session functions (incl. wasm_session_new_with_options)
   main.rs          — CLI: reads stdin, outputs JSON to stdout, errors to stderr
   tests.rs         — Shared fixture runners + implementation-specific tests
 
@@ -86,7 +86,7 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
 ```
 
 1. **Parser** (`parser.rs` / `parser.ts`): recursive descent, produces a list of `Statement` AST nodes
-2. **Interpreter** (`interpreter.rs` / `interpreter.ts`): executes statements against a `MOTLYNode`, handling merge/replace/delete semantics
+2. **Interpreter** (`interpreter.rs` / `interpreter.ts`): executes statements against a `MOTLYNode`, handling merge/replace/delete semantics. Takes an `ExecContext` (parse ID + `SessionOptions`) rather than threading individual parameters.
 3. **Validator** (`validate.rs` / `validate.ts`): optional schema validation and reference resolution
 
 ### Key types
@@ -146,12 +146,13 @@ Property metadata: `EXCLUSIVE` (mutual exclusion groups), `REQUIRES` (sibling de
 
 **Implementation status**: TypeScript validator is complete (118 test fixtures passing). Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
 
-Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `out-of-range`, `length-violation`, `exclusive-violation`, `requires-violation`
+Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `out-of-range`, `length-violation`, `exclusive-violation`, `requires-violation`, `ref-not-allowed`
 
 ## MOTLYSession API
 
 ```typescript
 class MOTLYSession {
+  constructor(options?: MOTLYSessionOptions);      // optional session options
   parse(source: string): MOTLYParseResult;        // parse + apply to value, returns { parseId, errors }
   parseSchema(source: string): MOTLYParseResult;  // parse as schema, returns { parseId, errors }
   reset(): void;                                   // clear value, keep schema (parseId counter continues)
@@ -161,7 +162,13 @@ class MOTLYSession {
   validateReferences(): MOTLYValidationError[];    // check all $-references resolve
   dispose(): void;                                 // free resources / mark dead
 }
+
+interface MOTLYSessionOptions {
+  disableReferences?: boolean;  // when true, `= $ref` and array `$ref` produce errors (default: false)
+}
 ```
+
+**`disableReferences` option**: When `true`, using `$`-references (e.g. `name = $other`) produces a `ref-not-allowed` error. Clone syntax (`:= $ref`) is always allowed since it deep-copies without creating circular structures. Useful for consumers like Malloy that cannot handle `MOTLYRef` link nodes.
 
 **Breaking change**: `parse()` and `parseSchema()` now return `MOTLYParseResult` (`{ parseId: number, errors: MOTLYError[] }`) instead of `MOTLYError[]`. Callers must destructure: `const { parseId, errors } = session.parse(source)`.
 

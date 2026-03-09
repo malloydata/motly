@@ -531,3 +531,44 @@ describe("Location tracking", () => {
     s.dispose();
   });
 });
+
+describe("disableReferences option", () => {
+  it("rejects = $ref when disableReferences is true", () => {
+    const s = new MOTLYSession({ disableReferences: true });
+    const { errors } = s.parse("a = hello\nb = $a");
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, "ref-not-allowed");
+    // The non-ref assignment should still succeed
+    const v = s.getValue();
+    const a = v.properties?.a;
+    assert.ok(a && !("linkTo" in a), "a should be a data node");
+    assert.equal((a as any).eq, "hello");
+    // b should not exist (ref was rejected)
+    assert.equal(v.properties?.b, undefined);
+    s.dispose();
+  });
+
+  it("rejects array $ref when disableReferences is true", () => {
+    const s = new MOTLYSession({ disableReferences: true });
+    const { errors } = s.parse("items = [hello, $foo]");
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, "ref-not-allowed");
+    s.dispose();
+  });
+
+  it("allows := $ref (clone) when disableReferences is true", () => {
+    const s = new MOTLYSession({ disableReferences: true });
+    const { errors } = s.parse("a = hello\nb := $a");
+    assert.equal(errors.length, 0);
+    const v = s.getValue();
+    assert.equal((v.properties?.b as any)?.eq, "hello");
+    s.dispose();
+  });
+
+  it("allows refs by default", () => {
+    const s = new MOTLYSession();
+    const { errors } = s.parse("a = hello\nb = $a");
+    assert.equal(errors.length, 0);
+    s.dispose();
+  });
+});

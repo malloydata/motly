@@ -676,7 +676,7 @@ fn prop_loc(node: &MOTLYDataNode, path: &[&str]) -> Option<MOTLYLocation> {
 
 #[test]
 fn test_loc_simple_node_gets_location() {
-    let result = crate::parse_motly("a = 1", MOTLYDataNode::new(), 0);
+    let result = crate::parse_motly_n("a = 1", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let l = prop_loc(&result.value, &["a"]).expect("a should have location");
     assert_eq!(l.parse_id, 0);
@@ -686,7 +686,7 @@ fn test_loc_simple_node_gets_location() {
 
 #[test]
 fn test_loc_multiple_nodes() {
-    let result = crate::parse_motly("a = 1\nb = 2", MOTLYDataNode::new(), 0);
+    let result = crate::parse_motly_n("a = 1\nb = 2", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["b"]).unwrap();
@@ -699,10 +699,10 @@ fn test_loc_multiple_nodes() {
 #[test]
 fn test_loc_first_appearance_seteq() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a = 1", node, 0);
+    let r1 = crate::parse_motly_n("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("a = 2", node, 1);
+    let r2 = crate::parse_motly_n("a = 2", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 0, "location should be from first parse");
@@ -718,10 +718,10 @@ fn test_loc_first_appearance_seteq() {
 #[test]
 fn test_loc_first_appearance_update_properties() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a { b = 1 }", node, 0);
+    let r1 = crate::parse_motly_n("a { b = 1 }", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("a { c = 2 }", node, 1);
+    let r2 = crate::parse_motly_n("a { c = 2 }", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 0, "location should be from first parse");
@@ -730,10 +730,10 @@ fn test_loc_first_appearance_update_properties() {
 #[test]
 fn test_loc_first_appearance_replace_properties() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a = 1", node, 0);
+    let r1 = crate::parse_motly_n("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("a: { b = 2 }", node, 1);
+    let r2 = crate::parse_motly_n("a: { b = 2 }", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 0, "location should be from first parse");
@@ -742,10 +742,10 @@ fn test_loc_first_appearance_replace_properties() {
 #[test]
 fn test_loc_assign_both_replaces_location() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a = 1", node, 0);
+    let r1 = crate::parse_motly_n("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("a := 2", node, 1);
+    let r2 = crate::parse_motly_n("a := 2", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 1, ":= should set new location");
@@ -754,10 +754,10 @@ fn test_loc_assign_both_replaces_location() {
 #[test]
 fn test_loc_assign_both_clone_replaces_location() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a = 1 { x = 10 }", node, 0);
+    let r1 = crate::parse_motly_n("a = 1 { x = 10 }", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("b := $a", node, 1);
+    let r2 = crate::parse_motly_n("b := $a", node, 1);
     assert!(r2.errors.is_empty());
     let la = prop_loc(&r2.value, &["a"]).unwrap();
     let lb = prop_loc(&r2.value, &["b"]).unwrap();
@@ -767,7 +767,7 @@ fn test_loc_assign_both_clone_replaces_location() {
 
 #[test]
 fn test_loc_nested_properties() {
-    let result = crate::parse_motly("a { b = 1\n  c = 2 }", MOTLYDataNode::new(), 0);
+    let result = crate::parse_motly_n("a { b = 1\n  c = 2 }", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["a", "b"]).unwrap();
@@ -778,7 +778,7 @@ fn test_loc_nested_properties() {
 
 #[test]
 fn test_loc_intermediate_path_nodes() {
-    let result = crate::parse_motly("a.b.c = 1", MOTLYDataNode::new(), 0);
+    let result = crate::parse_motly_n("a.b.c = 1", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let la = prop_loc(&result.value, &["a"]).unwrap();
     let lb = prop_loc(&result.value, &["a", "b"]).unwrap();
@@ -791,10 +791,10 @@ fn test_loc_intermediate_path_nodes() {
 #[test]
 fn test_loc_deletion_sets_location() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a = 1", node, 0);
+    let r1 = crate::parse_motly_n("a = 1", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("-a", node, 1);
+    let r2 = crate::parse_motly_n("-a", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 1, "deleted node should have new location");
@@ -806,7 +806,7 @@ fn test_loc_deletion_sets_location() {
 
 #[test]
 fn test_loc_span_covers_statement() {
-    let result = crate::parse_motly("a = 100", MOTLYDataNode::new(), 0);
+    let result = crate::parse_motly_n("a = 100", MOTLYDataNode::new(), 0);
     assert!(result.errors.is_empty());
     let l = prop_loc(&result.value, &["a"]).unwrap();
     assert_eq!(l.begin.offset, 0);
@@ -816,10 +816,10 @@ fn test_loc_span_covers_statement() {
 #[test]
 fn test_loc_define_bare_mention() {
     let mut node = MOTLYDataNode::new();
-    let r1 = crate::parse_motly("a", node, 0);
+    let r1 = crate::parse_motly_n("a", node, 0);
     assert!(r1.errors.is_empty());
     node = r1.value;
-    let r2 = crate::parse_motly("a = 1", node, 1);
+    let r2 = crate::parse_motly_n("a = 1", node, 1);
     assert!(r2.errors.is_empty());
     let l = prop_loc(&r2.value, &["a"]).unwrap();
     assert_eq!(l.parse_id, 0, "bare define should set location");
@@ -828,11 +828,11 @@ fn test_loc_define_bare_mention() {
 #[test]
 fn test_loc_session_parse_ids() {
     let mut node = MOTLYDataNode::new();
-    let r0 = crate::parse_motly("a = 1", node, 0);
+    let r0 = crate::parse_motly_n("a = 1", node, 0);
     node = r0.value;
-    let r1 = crate::parse_motly("b = 2", node, 1);
+    let r1 = crate::parse_motly_n("b = 2", node, 1);
     node = r1.value;
-    let r2 = crate::parse_motly("c = 3", node, 2);
+    let r2 = crate::parse_motly_n("c = 3", node, 2);
     node = r2.value;
     assert_eq!(prop_loc(&node, &["a"]).unwrap().parse_id, 0);
     assert_eq!(prop_loc(&node, &["b"]).unwrap().parse_id, 1);
@@ -856,4 +856,63 @@ fn test_meta_schema_validates_itself() {
         "Meta-schema failed to validate against itself: {:?}",
         errors
     );
+}
+
+// ── allow_refs option tests ────────────────────────────────────────
+
+#[test]
+fn test_allow_refs_false_rejects_eq_ref() {
+    use crate::interpreter::{ExecContext, SessionOptions, execute};
+
+    let options = SessionOptions { disable_references: true };
+    let stmts = crate::parser::parse("a = hello\nb = $a").unwrap();
+    let mut root = MOTLYDataNode::new();
+    let ctx = ExecContext { parse_id: 0, options };
+    let errors = execute(&stmts, &mut root, &ctx);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "ref-not-allowed");
+    // a should still be set
+    assert!(root.properties.as_ref().unwrap().contains_key("a"));
+    // b should not exist
+    assert!(!root.properties.as_ref().unwrap().contains_key("b"));
+}
+
+#[test]
+fn test_allow_refs_false_rejects_array_ref() {
+    use crate::interpreter::{ExecContext, SessionOptions, execute};
+
+    let options = SessionOptions { disable_references: true };
+    let stmts = crate::parser::parse("items = [hello, $foo]").unwrap();
+    let mut root = MOTLYDataNode::new();
+    let ctx = ExecContext { parse_id: 0, options };
+    let errors = execute(&stmts, &mut root, &ctx);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].code, "ref-not-allowed");
+}
+
+#[test]
+fn test_allow_refs_false_allows_clone() {
+    use crate::interpreter::{ExecContext, SessionOptions, execute};
+
+    let options = SessionOptions { disable_references: true };
+    let stmts = crate::parser::parse("a = hello\nb := $a").unwrap();
+    let mut root = MOTLYDataNode::new();
+    let ctx = ExecContext { parse_id: 0, options };
+    let errors = execute(&stmts, &mut root, &ctx);
+    assert!(errors.is_empty(), "clone should be allowed: {:?}", errors);
+    let b = root.properties.as_ref().unwrap().get("b").unwrap();
+    match b {
+        MOTLYNode::Data(node) => {
+            assert_eq!(node.eq, Some(EqValue::Scalar(Scalar::String("hello".to_string()))));
+        }
+        MOTLYNode::Ref { .. } => panic!("b should be a data node, not a ref"),
+    }
+}
+
+#[test]
+fn test_allow_refs_default_allows_refs() {
+    let result = crate::parse_motly_0("a = hello\nb = $a", MOTLYDataNode::new());
+    assert!(result.errors.is_empty());
+    let b = result.value.properties.as_ref().unwrap().get("b").unwrap();
+    assert!(matches!(b, MOTLYNode::Ref { .. }));
 }

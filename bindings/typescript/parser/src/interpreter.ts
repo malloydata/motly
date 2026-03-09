@@ -5,34 +5,44 @@ import {
   RefPathSegment,
   Span,
 } from "./ast";
-import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, isRef, formatRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, MOTLYSessionOptions, isRef, formatRef } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
+/** Per-parse execution context, combining the parse ID with session options. */
+export interface ExecContext {
+  parseId: number;
+  options: MOTLYSessionOptions;
+}
+
 /** Execute a list of parsed statements against an existing MOTLYDataNode. */
-export function execute(statements: Statement[], root: MOTLYDataNode, parseId: number): MOTLYError[] {
+export function execute(
+  statements: Statement[],
+  root: MOTLYDataNode,
+  ctx: ExecContext,
+): MOTLYError[] {
   const errors: MOTLYError[] = [];
   for (const stmt of statements) {
-    executeStatement(stmt, root, errors, parseId);
+    executeStatement(stmt, root, errors, ctx);
   }
   return errors;
 }
 
-function executeStatement(stmt: Statement, node: MOTLYDataNode, errors: MOTLYError[], parseId: number): void {
+function executeStatement(stmt: Statement, node: MOTLYDataNode, errors: MOTLYError[], ctx: ExecContext): void {
   switch (stmt.kind) {
     case "setEq":
-      executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors, parseId, stmt.span);
+      executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors, ctx, stmt.span);
       break;
     case "assignBoth":
-      executeAssignBoth(node, stmt.path, stmt.value, stmt.properties, errors, parseId, stmt.span);
+      executeAssignBoth(node, stmt.path, stmt.value, stmt.properties, errors, ctx, stmt.span);
       break;
     case "replaceProperties":
-      executeReplaceProperties(node, stmt.path, stmt.properties, errors, parseId, stmt.span);
+      executeReplaceProperties(node, stmt.path, stmt.properties, errors, ctx, stmt.span);
       break;
     case "updateProperties":
-      executeUpdateProperties(node, stmt.path, stmt.properties, errors, parseId, stmt.span);
+      executeUpdateProperties(node, stmt.path, stmt.properties, errors, ctx, stmt.span);
       break;
     case "define":
-      executeDefine(node, stmt.path, stmt.deleted, parseId, stmt.span);
+      executeDefine(node, stmt.path, stmt.deleted, ctx, stmt.span);
       break;
     case "clearAll":
       delete node.eq;
@@ -41,15 +51,15 @@ function executeStatement(stmt: Statement, node: MOTLYDataNode, errors: MOTLYErr
   }
 }
 
-/** Build a MOTLYLocation from a parseId and span. */
-function makeLocation(parseId: number, span: Span): MOTLYLocation {
-  return { parseId, begin: span.begin, end: span.end };
+/** Build a MOTLYLocation from ctx and span. */
+function makeLocation(ctx: ExecContext, span: Span): MOTLYLocation {
+  return { parseId: ctx.parseId, begin: span.begin, end: span.end };
 }
 
 /** Set location on a node only if it doesn't already have one (first-appearance rule). */
-function setFirstLocation(node: MOTLYDataNode, parseId: number, span: Span): void {
+function setFirstLocation(node: MOTLYDataNode, ctx: ExecContext, span: Span): void {
   if (!node.location) {
-    node.location = makeLocation(parseId, span);
+    node.location = makeLocation(ctx, span);
   }
 }
 
@@ -66,11 +76,20 @@ function executeSetEq(
   value: TagValue,
   properties: Statement[] | null,
   errors: MOTLYError[],
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): void {
   // Special case: reference value → insert as MOTLYRef
   if (value.kind === "scalar" && value.value.kind === "reference") {
+    if (ctx.options.disableReferences) {
+      errors.push({
+        code: "ref-not-allowed",
+        message: "References are not allowed in this session. Use := for cloning.",
+        begin: span.begin,
+        end: span.end,
+      });
+      return;
+    }
     if (properties !== null) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
@@ -80,12 +99,12 @@ function executeSetEq(
         end: zero,
       });
     }
-    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+    const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
     getOrCreateProperties(parent)[writeKey] = makeRef(value.value.ups, value.value.path);
     return;
   }
 
-  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+  const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
   const props = getOrCreateProperties(parent);
 
   // Get or create target (preserves existing node and its properties)
@@ -99,15 +118,15 @@ function executeSetEq(
   const target = ensureDataNode(props, writeKey);
 
   // Set location on first appearance
-  setFirstLocation(target, parseId, span);
+  setFirstLocation(target, ctx, span);
 
   // Set the value slot
-  setEqSlot(target, value, parseId);
+  setEqSlot(target, value, ctx, errors);
 
   // If properties block present, MERGE them
   if (properties !== null) {
     for (const s of properties) {
-      executeStatement(s, target, errors, parseId);
+      executeStatement(s, target, errors, ctx);
     }
   }
 }
@@ -124,7 +143,7 @@ function executeAssignBoth(
   value: TagValue,
   properties: Statement[] | null,
   errors: MOTLYError[],
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): void {
   if (
@@ -151,25 +170,25 @@ function executeAssignBoth(
     if (properties !== null) {
       cloned.properties = {};
       for (const s of properties) {
-        executeStatement(s, cloned, errors, parseId);
+        executeStatement(s, cloned, errors, ctx);
       }
     }
     // := always sets a new location (it's a full replacement)
-    cloned.location = makeLocation(parseId, span);
-    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+    cloned.location = makeLocation(ctx, span);
+    const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
     getOrCreateProperties(parent)[writeKey] = cloned;
   } else {
     // Literal value: create fresh node (replaces everything)
     const result: MOTLYDataNode = {};
     // := always sets a new location
-    result.location = makeLocation(parseId, span);
-    setEqSlot(result, value, parseId);
+    result.location = makeLocation(ctx, span);
+    setEqSlot(result, value, ctx, errors);
     if (properties !== null) {
       for (const s of properties) {
-        executeStatement(s, result, errors, parseId);
+        executeStatement(s, result, errors, ctx);
       }
     }
-    const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+    const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
     getOrCreateProperties(parent)[writeKey] = result;
   }
 }
@@ -182,10 +201,10 @@ function executeReplaceProperties(
   path: string[],
   properties: Statement[],
   errors: MOTLYError[],
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+  const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
 
   const result: MOTLYDataNode = {};
 
@@ -202,11 +221,11 @@ function executeReplaceProperties(
 
   // If no existing location, this is the first appearance
   if (!result.location) {
-    result.location = makeLocation(parseId, span);
+    result.location = makeLocation(ctx, span);
   }
 
   for (const stmt of properties) {
-    executeStatement(stmt, result, errors, parseId);
+    executeStatement(stmt, result, errors, ctx);
   }
 
   parentProps[writeKey] = result;
@@ -217,10 +236,10 @@ function executeUpdateProperties(
   path: string[],
   properties: Statement[],
   errors: MOTLYError[],
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+  const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
 
   const props = getOrCreateProperties(parent);
 
@@ -232,10 +251,10 @@ function executeUpdateProperties(
   const target = ensureDataNode(props, writeKey);
 
   // Set location on first appearance
-  setFirstLocation(target, parseId, span);
+  setFirstLocation(target, ctx, span);
 
   for (const stmt of properties) {
-    executeStatement(stmt, target, errors, parseId);
+    executeStatement(stmt, target, errors, ctx);
   }
 }
 
@@ -243,20 +262,20 @@ function executeDefine(
   node: MOTLYDataNode,
   path: string[],
   deleted: boolean,
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): void {
-  const [writeKey, parent] = buildAccessPath(node, path, parseId, span);
+  const [writeKey, parent] = buildAccessPath(node, path, ctx, span);
   const props = getOrCreateProperties(parent);
   if (deleted) {
     const delNode: MOTLYDataNode = { deleted: true };
-    delNode.location = makeLocation(parseId, span);
+    delNode.location = makeLocation(ctx, span);
     props[writeKey] = delNode;
   } else {
     // Get-or-create: if node already exists, leave it alone
     if (props[writeKey] === undefined) {
       const newNode: MOTLYDataNode = {};
-      newNode.location = makeLocation(parseId, span);
+      newNode.location = makeLocation(ctx, span);
       props[writeKey] = newNode;
     }
   }
@@ -266,7 +285,7 @@ function executeDefine(
 function buildAccessPath(
   node: MOTLYDataNode,
   path: string[],
-  parseId: number,
+  ctx: ExecContext,
   span: Span
 ): [string, MOTLYDataNode] {
   let current = node;
@@ -277,22 +296,22 @@ function buildAccessPath(
 
     if (props[segment] === undefined) {
       const intermediate: MOTLYDataNode = {};
-      intermediate.location = makeLocation(parseId, span);
+      intermediate.location = makeLocation(ctx, span);
       props[segment] = intermediate;
     }
 
     current = ensureDataNode(props, segment);
     // Set location on intermediate nodes (first-appearance)
-    setFirstLocation(current, parseId, span);
+    setFirstLocation(current, ctx, span);
   }
 
   return [path[path.length - 1], current];
 }
 
 /** Set the eq slot on a target node from a TagValue. */
-function setEqSlot(target: MOTLYDataNode, value: TagValue, parseId: number): void {
+function setEqSlot(target: MOTLYDataNode, value: TagValue, ctx: ExecContext, errors: MOTLYError[]): void {
   if (value.kind === "array") {
-    target.eq = resolveArray(value.elements, [], parseId);
+    target.eq = resolveArray(value.elements, errors, ctx);
   } else {
     const sv = value.value;
     switch (sv.kind) {
@@ -322,13 +341,25 @@ function setEqSlot(target: MOTLYDataNode, value: TagValue, parseId: number): voi
 }
 
 /** Resolve an array of AST elements to MOTLYNodes. */
-function resolveArray(elements: ArrayElement[], errors: MOTLYError[], parseId: number): MOTLYNode[] {
-  return elements.map((el) => resolveArrayElement(el, errors, parseId));
+function resolveArray(elements: ArrayElement[], errors: MOTLYError[], ctx: ExecContext): MOTLYNode[] {
+  return elements.map((el) => resolveArrayElement(el, errors, ctx));
 }
 
-function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: number): MOTLYNode {
+function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], ctx: ExecContext): MOTLYNode {
   // Check if the element value is a reference → becomes MOTLYRef
   if (el.value !== null && el.value.kind === "scalar" && el.value.value.kind === "reference") {
+    if (ctx.options.disableReferences) {
+      errors.push({
+        code: "ref-not-allowed",
+        message: "References are not allowed in this session. Use := for cloning.",
+        begin: el.span.begin,
+        end: el.span.end,
+      });
+      // Return an empty node instead of the ref
+      const node: MOTLYDataNode = {};
+      node.location = makeLocation(ctx, el.span);
+      return node;
+    }
     if (el.properties !== null) {
       const zero = { line: 0, column: 0, offset: 0 };
       errors.push({
@@ -342,15 +373,15 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], parseId: nu
   }
 
   const node: MOTLYDataNode = {};
-  node.location = makeLocation(parseId, el.span);
+  node.location = makeLocation(ctx, el.span);
 
   if (el.value !== null) {
-    setEqSlot(node, el.value, parseId);
+    setEqSlot(node, el.value, ctx, errors);
   }
 
   if (el.properties !== null) {
     for (const stmt of el.properties) {
-      executeStatement(stmt, node, errors, parseId);
+      executeStatement(stmt, node, errors, ctx);
     }
   }
 

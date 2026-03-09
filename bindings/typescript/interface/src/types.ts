@@ -116,6 +116,12 @@ export function isEnvRef(eq: MOTLYDataNode["eq"]): eq is MOTLYEnvRef {
   return typeof eq === "object" && eq !== null && "env" in eq && !Array.isArray(eq) && !(eq instanceof Date);
 }
 
+/** Options for creating a MOTLYSession. */
+export interface MOTLYSessionOptions {
+  /** When true, `$`-references produce errors. `:= $ref` (clone) is always allowed. */
+  disableReferences?: boolean;
+}
+
 /** An error from reference validation. */
 export interface MOTLYValidationError {
   /** Machine-readable error code (e.g. `"unresolved-reference"`). */

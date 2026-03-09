@@ -3,11 +3,12 @@ import {
   MOTLYDataNode,
   MOTLYError,
   MOTLYParseResult,
+  MOTLYSessionOptions,
   MOTLYSchemaError,
   MOTLYValidationError,
 } from "../../interface/src/types";
 import { parse } from "./parser";
-import { execute } from "./interpreter";
+import { execute, ExecContext } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
 import { cloneNode } from "./clone";
 import { Mot, GetMotOptions, buildMot } from "./mot";
@@ -23,6 +24,11 @@ export class MOTLYSession {
   private schema: MOTLYDataNode | null = null;
   private disposed = false;
   private nextParseId = 0;
+  private options: MOTLYSessionOptions;
+
+  constructor(options?: MOTLYSessionOptions) {
+    this.options = options ?? {};
+  }
 
   /**
    * Parse MOTLY source and apply it to the session's value in place.
@@ -30,13 +36,13 @@ export class MOTLYSession {
    */
   parse(source: string): MOTLYParseResult {
     this.ensureAlive();
-    const parseId = this.nextParseId++;
+    const ctx = this.makeContext();
     try {
       const stmts = parse(source);
-      const errors = execute(stmts, this.value, parseId);
-      return { parseId, errors };
+      const errors = execute(stmts, this.value, ctx);
+      return { parseId: ctx.parseId, errors };
     } catch (e) {
-      if (isMotlyError(e)) return { parseId, errors: [e] };
+      if (isMotlyError(e)) return { parseId: ctx.parseId, errors: [e] };
       throw e;
     }
   }
@@ -47,15 +53,15 @@ export class MOTLYSession {
    */
   parseSchema(source: string): MOTLYParseResult {
     this.ensureAlive();
-    const parseId = this.nextParseId++;
+    const ctx = this.makeContext();
     try {
       const stmts = parse(source);
       const fresh: MOTLYDataNode = {};
-      const errors = execute(stmts, fresh, parseId);
+      const errors = execute(stmts, fresh, ctx);
       this.schema = fresh;
-      return { parseId, errors };
+      return { parseId: ctx.parseId, errors };
     } catch (e) {
-      if (isMotlyError(e)) return { parseId, errors: [e] };
+      if (isMotlyError(e)) return { parseId: ctx.parseId, errors: [e] };
       throw e;
     }
   }
@@ -114,6 +120,15 @@ export class MOTLYSession {
    */
   dispose(): void {
     this.disposed = true;
+  }
+
+  private makeContext(): ExecContext {
+    return {
+      parseId: this.nextParseId++,
+      options: {
+        disableReferences: this.options.disableReferences,
+      },
+    };
   }
 
   private ensureAlive(): void {

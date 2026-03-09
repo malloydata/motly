@@ -37,6 +37,21 @@ const tags2 = config.texts("tags");                   // ["web", "api", "product
 
 A stateful parsing session. Source text is parsed and accumulated into an internal value tree. An optional schema can be loaded for validation. The `Mot` read API provides typed, navigable access to the resolved tree.
 
+### Constructor
+
+```ts
+const session = new MOTLYSession(options?: MOTLYSessionOptions);
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `disableReferences` | `boolean` | `false` | When `true`, `$`-references (e.g. `name = $other`) produce a `ref-not-allowed` error. Clone syntax (`:= $ref`) is always allowed since it deep-copies without creating circular structures. |
+
+```ts
+// For consumers that cannot handle MOTLYRef link nodes (e.g. Malloy):
+const session = new MOTLYSession({ disableReferences: true });
+```
+
 ### `parse(source: string): MOTLYParseResult`
 
 Parse MOTLY source and apply it to the session's value. Multiple calls accumulate — later statements merge with or override earlier ones.
@@ -88,7 +103,7 @@ for (const err of schemaErrors) {
 }
 ```
 
-Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`.
+Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `ref-not-allowed`.
 
 ### `getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M`
 

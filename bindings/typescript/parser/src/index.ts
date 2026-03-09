@@ -10,6 +10,7 @@ export type {
   MOTLYDataNode,
   MOTLYError,
   MOTLYSchemaError,
+  MOTLYSessionOptions,
   MOTLYValidationError,
 } from "../../interface/src/types";
 

@@ -10,6 +10,7 @@ pub mod validate;
 use error::MOTLYError;
 use tree::MOTLYDataNode;
 
+pub use interpreter::{ExecContext, SessionOptions};
 pub use validate::{validate_references, validate_schema, SchemaError, ValidationError};
 
 // ── Core API ───────────────────────────────────────────────────────
@@ -22,10 +23,10 @@ pub struct MOTLYResult {
 
 /// Parse MOTLY source and execute statements against the given value,
 /// returning the updated value and any errors (parse errors + non-fatal execution errors).
-pub fn parse_motly(input: &str, mut value: MOTLYDataNode, parse_id: u32) -> MOTLYResult {
+pub fn parse_motly(input: &str, mut value: MOTLYDataNode, ctx: &ExecContext) -> MOTLYResult {
     match parser::parse(input) {
         Ok(stmts) => {
-            let exec_errors = interpreter::execute(&stmts, &mut value, parse_id);
+            let exec_errors = interpreter::execute(&stmts, &mut value, ctx);
             MOTLYResult {
                 value,
                 errors: exec_errors,
@@ -66,6 +67,7 @@ struct Session {
     value: MOTLYDataNode,
     schema: Option<MOTLYDataNode>,
     next_parse_id: u32,
+    options: SessionOptions,
 }
 
 // WASM is single-threaded, so thread_local is just a convenient safe wrapper.
@@ -89,6 +91,17 @@ fn next_id() -> u32 {
 /// Create a new session holding an empty MOTLYDataNode. Returns a session ID.
 #[no_mangle]
 pub extern "C" fn wasm_session_new() -> u32 {
+    wasm_session_new_with_options(0)
+}
+
+/// Create a new session with options encoded as bit flags.
+/// Bit 0: disable_references (1 = true, 0 = false).
+/// Pass `0` for default behavior.
+#[no_mangle]
+pub extern "C" fn wasm_session_new_with_options(flags: u32) -> u32 {
+    let options = SessionOptions {
+        disable_references: flags & 1 != 0,
+    };
     let id = next_id();
     with_sessions(|s| {
         s.insert(
@@ -97,6 +110,7 @@ pub extern "C" fn wasm_session_new() -> u32 {
                 value: MOTLYDataNode::new(),
                 schema: None,
                 next_parse_id: 0,
+                options,
             },
         )
     });
@@ -115,24 +129,27 @@ pub unsafe extern "C" fn wasm_session_parse(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let (value, parse_id) = with_sessions(|s| match s.get_mut(&id) {
+    let (value, ctx) = with_sessions(|s| match s.get_mut(&id) {
         Some(session) => {
             let pid = session.next_parse_id;
             session.next_parse_id += 1;
-            Some((std::mem::replace(&mut session.value, MOTLYDataNode::new()), pid))
+            Some((
+                std::mem::replace(&mut session.value, MOTLYDataNode::new()),
+                ExecContext { parse_id: pid, options: session.options.clone() },
+            ))
         }
         None => None,
     })
     .unwrap_or_else(|| {
-        return (MOTLYDataNode::new(), 0);
+        (MOTLYDataNode::new(), ExecContext { parse_id: 0, options: SessionOptions::default() })
     });
-    let result = parse_motly(input, value, parse_id);
+    let result = parse_motly(input, value, &ctx);
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.value = result.value;
         }
     });
-    let json_str = json::parse_result_to_json(parse_id, &result.errors);
+    let json_str = json::parse_result_to_json(ctx.parse_id, &result.errors);
     string_to_c_ptr(json_str)
 }
 
@@ -148,21 +165,21 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let parse_id = with_sessions(|s| match s.get_mut(&id) {
+    let ctx = with_sessions(|s| match s.get_mut(&id) {
         Some(session) => {
             let pid = session.next_parse_id;
             session.next_parse_id += 1;
-            pid
+            ExecContext { parse_id: pid, options: session.options.clone() }
         }
-        None => 0,
+        None => ExecContext { parse_id: 0, options: SessionOptions::default() },
     });
-    let result = parse_motly(input, MOTLYDataNode::new(), parse_id);
+    let result = parse_motly(input, MOTLYDataNode::new(), &ctx);
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.schema = Some(result.value);
         }
     });
-    let json_str = json::parse_result_to_json(parse_id, &result.errors);
+    let json_str = json::parse_result_to_json(ctx.parse_id, &result.errors);
     string_to_c_ptr(json_str)
 }
 
@@ -233,10 +250,15 @@ fn string_to_c_ptr(s: String) -> *const u8 {
     Box::into_raw(boxed) as *mut u8
 }
 
-/// Convenience wrapper for tests: parse_motly with parse_id=0.
+/// Convenience wrapper for tests: parse_motly with default options.
+#[cfg(test)]
+fn parse_motly_n(input: &str, value: MOTLYDataNode, parse_id: u32) -> MOTLYResult {
+    parse_motly(input, value, &ExecContext { parse_id, options: SessionOptions::default() })
+}
+
 #[cfg(test)]
 fn parse_motly_0(input: &str, value: MOTLYDataNode) -> MOTLYResult {
-    parse_motly(input, value, 0)
+    parse_motly_n(input, value, 0)
 }
 
 #[cfg(test)]
