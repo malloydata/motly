@@ -204,7 +204,7 @@ The TypeScript API now uses **methods** for all value accessors (`text()`,
 `number()`, etc.) rather than getter properties. This was done so that:
 1. Implementations can add side effects (read tracking) transparently
 2. Accessors can accept optional path arguments: `mot.text("server", "host")`
-3. Tag (Malloy's read-tracked wrapper) can implement the Mot interface
+3. Tag (Malloy's read-tracked wrapper) can extend Mot
 
 For Python, the choice is open. `@property` is more Pythonic for simple reads,
 but methods would match TS and enable pathed accessors:

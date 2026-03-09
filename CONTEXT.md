@@ -42,7 +42,7 @@ bindings/typescript/
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
       interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
       validate.ts      — TypeScript port of src/validate.rs (~810 lines)
-      mot.ts           — Mot API: resolved read-only view of MOTLY tree
+      mot.ts           — Mot abstract class + MotValue, MotRef, buildMot
       clone.ts         — Deep clone helpers for MOTLYNode trees
     test/test.ts       — fixture-driven tests + hand-written tests
     test/mot.test.ts   — Tests for Mot API

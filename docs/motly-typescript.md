@@ -120,7 +120,7 @@ Mark the session as disposed. After calling `dispose()`, all other methods throw
 
 ## Mot
 
-The `Mot` interface is the consumer-facing read API. Every `Mot` has two independent aspects:
+The `Mot` abstract class is the consumer-facing read API. Every `Mot` has two independent aspects:
 
 - A **value** — a scalar (string, number, boolean, date), an array of Mots, or nothing
 - **Properties** — a map of named child Mots
@@ -157,6 +157,10 @@ if (config.has("server", "ssl")) {
 #### `exists: boolean`
 
 `true` for any real node (including flags with no value). `false` only for the Undefined Mot.
+
+#### `isRef: boolean`
+
+`true` if this Mot is a reference that delegates reads to a resolved target. `false` for concrete nodes and the Undefined Mot.
 
 ### Value Type
 
@@ -269,14 +273,15 @@ The `MotFactory` interface lets you control what objects `getMot()` creates. Thi
 
 ```ts
 interface MotFactory<M extends Mot = Mot> {
-  createMot(value: MotResolvedValue, properties: Map<string, M>): M;
+  createMot(value: MotResolvedValue<M>, properties: Map<string, M>): M;
+  createRefMot(ref: MotRefData, target: M): M;
   undefinedMot: M;
 }
 ```
 
 The factory's `createMot` receives a resolved value and a mutable properties `Map`. The Map is empty at creation time and populated afterward — implementations must read from it lazily (not copy at construction time).
 
-When `M extends Mot`, array elements in `MotResolvedValue` are typed as `Mot[]` but are `M` instances at runtime. Factory implementations should cast if needed.
+The factory's `createRefMot` is called for `$`-reference nodes. The `ref` argument contains the reference data (`linkUps` and `linkTo`); the `target` is the resolved Mot. The factory can wrap the target in a delegate (to preserve reference structure for serialization), return the target directly (to flatten refs), or return `undefinedMot` (to exclude refs from the tree).
 
 ```ts
 const mot = session.getMot({ factory: myFactory });

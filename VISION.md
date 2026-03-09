@@ -12,7 +12,7 @@ This is a breaking change from the current parse-only API, which is why we're sh
 
 ## Mot: The Read API
 
-The first step toward a full DOM is the read-only `Mot` interface — a resolved,
+The first step toward a full DOM is the read-only `Mot` class — a resolved,
 typed, navigable view of parsed MOTLY data. Refs followed, env vars substituted,
 deletions consumed. The consumer sees clean data; the internal model retains
 provenance for future mutation support.
