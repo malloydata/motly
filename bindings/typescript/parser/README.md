@@ -2,7 +2,7 @@
 
 A pure TypeScript implementation of a parser for [MOTLY](https://github.com/malloydata/motly), a configuration language from [Malloy](https://github.com/malloydata/malloy). Zero native dependencies.
 
-This package parses MOTLY source text into a node tree and validates it against schemas. Higher-level language bindings for working with MOTLY data are planned separately.
+This package parses MOTLY source text into a node tree, optionally validates it against schemas, and provides a high-level read API (`Mot`) for navigating the result.
 
 ## Install
 
@@ -26,25 +26,35 @@ const { errors } = session.parse(`
 `);
 
 if (errors.length > 0) {
-  console.error(errors);
-} else {
-  const value = session.getValue();
-  console.log(value);
-  // {
-  //   properties: {
-  //     server: {
-  //       eq: "webhost",
-  //       properties: {
-  //         host: { eq: "localhost" },
-  //         port: { eq: 8080 },
-  //         ssl:  { eq: true }
-  //       }
-  //     }
-  //   }
-  // }
+  console.error("Parse errors:", errors);
 }
 
-session.dispose();
+const result = session.finish();
+
+if (result.errors.length > 0) {
+  console.error("Interpretation errors:", result.errors);
+}
+
+// Low-level tree access
+const tree = result.getValue();
+console.log(tree);
+// {
+//   properties: {
+//     server: {
+//       eq: "webhost",
+//       properties: {
+//         host: { eq: "localhost" },
+//         port: { eq: 8080 },
+//         ssl:  { eq: true }
+//       }
+//     }
+//   }
+// }
+
+// High-level Mot access
+const mot = result.getMot();
+mot.get("server", "host").text();  // "localhost"
+mot.get("server", "port").numeric();  // 8080
 ```
 
 ## MOTLY syntax at a glance
@@ -86,29 +96,55 @@ See the [full language reference](https://github.com/malloydata/motly/blob/main/
 
 ### `MOTLYSession`
 
+A write-only session that accumulates input. Call `parse()` one or more times, then `finish()` to interpret everything. The session is spent after `finish()`.
+
 ```typescript
 class MOTLYSession {
+  constructor(options?: MOTLYSessionOptions);
   parse(source: string): MOTLYParseResult;
-  parseSchema(source: string): MOTLYParseResult;
-  getValue(): MOTLYDataNode;
-  getMot(options?: GetMotOptions): Mot;
-  reset(): void;
-  validateSchema(): MOTLYSchemaError[];
-  validateReferences(): MOTLYValidationError[];
+  finish(): MOTLYResult;
   dispose(): void;
+}
+
+interface MOTLYSessionOptions {
+  disableReferences?: boolean;  // reject $-references (clones still allowed)
 }
 ```
 
 | Method | Description |
 |--------|-------------|
-| `parse(source)` | Parse MOTLY source and apply it to the session value. Returns `{ parseId, errors }`. Successive calls accumulate into the same value tree; each call gets an incrementing `parseId` for mapping locations back to sources. |
-| `parseSchema(source)` | Parse MOTLY source as a schema (replaces any previous schema). Returns `{ parseId, errors }`. |
-| `getValue()` | Return a deep clone of the current value tree. |
-| `getMot(options?)` | Return a resolved, read-only `Mot` view of the value tree. Options: `{ env }` for `@env` resolution. |
-| `reset()` | Clear the value tree (schema is kept). |
-| `validateSchema()` | Validate the current value against the stored schema. Returns `[]` if no schema is set. |
-| `validateReferences()` | Check that all `$`-references in the value tree resolve. |
+| `parse(source)` | Parse MOTLY source and accumulate statements. Returns `{ parseId, errors }`. Only syntax errors are returned here; semantic errors are deferred to `finish()`. |
+| `finish()` | Interpret all accumulated input, validate references, and return an immutable `MOTLYResult`. The session is spent after this call. |
 | `dispose()` | Mark the session as dead. All subsequent method calls will throw. |
+
+### `MOTLYResult`
+
+Immutable result from `finish()`. All interpretation and reference resolution has already happened.
+
+```typescript
+class MOTLYResult {
+  readonly errors: MOTLYError[];
+  getValue(): MOTLYDataNode;
+  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M;
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `errors` | Interpretation + reference validation errors. |
+| `getValue()` | Return a deep clone of the interpreted tree. |
+| `getMot(options?)` | Return a resolved, read-only `Mot` view. Follows references lazily. Options: `{ factory }` for custom Mot subclasses, `{ env }` for `@env` resolution. |
+
+### `MOTLYSchema`
+
+Independent of sessions. Parse a schema once, validate any number of trees.
+
+```typescript
+class MOTLYSchema {
+  static parse(source: string): { schema: MOTLYSchema; errors: MOTLYError[] };
+  validate(tree: MOTLYDataNode): MOTLYSchemaError[];
+}
+```
 
 ### Exported types
 
@@ -120,7 +156,7 @@ interface MOTLYDataNode {
   eq?: MOTLYValue;
   properties?: Record<string, MOTLYNode>;
   deleted?: boolean;
-  location?: MOTLYLocation;     // source location of first appearance
+  location?: MOTLYLocation;
 }
 
 type MOTLYScalar = string | number | boolean | Date;
@@ -131,7 +167,7 @@ interface MOTLYEnvRef { env: string }
 
 // Locations
 interface MOTLYLocation {
-  parseId: number;              // which parse() call (0-based, auto-incrementing)
+  parseId: number;
   begin: { line: number; column: number; offset: number };
   end:   { line: number; column: number; offset: number };
 }
@@ -139,18 +175,18 @@ interface MOTLYLocation {
 interface MOTLYParseResult { parseId: number; errors: MOTLYError[] }
 
 // Errors
-interface MOTLYError           { code: string; message: string; begin: Position; end: Position }
-interface MOTLYSchemaError     { code: string; message: string; path: string[]; location?: MOTLYLocation }
-interface MOTLYValidationError { code: string; message: string; path: string[]; location?: MOTLYLocation }
+interface MOTLYError       { code: string; message: string; begin: Position; end: Position }
+interface MOTLYSchemaError { code: string; message: string; path: string[]; location?: MOTLYLocation }
 ```
 
 ### Type guards
 
 ```typescript
-import { isRef, isEnvRef } from "@malloydata/motly-ts-parser";
+import { isRef, isDataNode, isEnvRef } from "@malloydata/motly-ts-parser";
 
-isRef(propertyValue);   // true if MOTLYRef  ({ linkTo })
-isEnvRef(node.eq);      // true if MOTLYEnvRef ({ env })
+isRef(node);       // true if MOTLYRef  ({ linkTo, linkUps })
+isDataNode(node);  // true if MOTLYDataNode (not a ref)
+isEnvRef(node.eq); // true if MOTLYEnvRef ({ env })
 ```
 
 ## Full language documentation
