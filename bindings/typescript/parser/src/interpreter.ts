@@ -1065,7 +1065,7 @@ function formatRefPath(ups: number, path: RefPathSegment[]): string {
   let first = true;
   for (const seg of path) {
     if (seg.kind === "name") {
-      if (!first) s += ".";
+      if (!first || ups > 0) s += ".";
       s += seg.name;
       first = false;
     } else {

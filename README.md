@@ -53,7 +53,7 @@ MOTLY is under active development. [Malloy](https://malloydata.dev) uses the MOT
 
 **What works today (0.1.0):**
 - Full parser and interpreter (Rust and pure TypeScript, kept in sync)
-- Reference system (`$root.path`, `$^sibling`, `$^^grandparent`, indexed access)
+- Reference system (`$root.path`, `$^.sibling`, `$^^.grandparent`, `$^` for parent, indexed access)
 - Clone/override patterns with `:=` for configuration modes and inheritance
 - [`@malloydata/motly-ts-parser`](https://www.npmjs.com/package/@malloydata/motly-ts-parser) -- the TypeScript parser, published on npm with zero native dependencies
 

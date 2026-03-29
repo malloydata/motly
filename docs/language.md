@@ -457,7 +457,7 @@ server: {
     api: {
       # $^ goes up one level (to endpoints)
       # $^^ goes up two levels (to server)
-      url = $^^host
+      url = $^^.host
     }
   }
 }
@@ -466,8 +466,9 @@ server: {
 | Syntax | Meaning |
 |--------|---------|
 | `$path` | Absolute path from root |
-| `$^path` | Up one level, then follow path |
-| `$^^path` | Up two levels, then follow path |
+| `$^` | The parent node itself |
+| `$^.path` | Up one level, then follow path |
+| `$^^.path` | Up two levels, then follow path |
 
 ### Array Indexing in References
 
@@ -540,16 +541,16 @@ A clone is always a self-contained snapshot. If you need to refer to something o
 # OK — internal reference resolves within the cloned subtree
 base: {
   shared_host = "db.internal"
-  primary: { host = $^shared_host }
+  primary: { host = $^.shared_host }
 }
-copy := $base   # works: $^shared_host resolves within base
+copy := $base   # works: $^.shared_host resolves within base
 
 # ERROR — relative reference escapes the clone boundary
 root_setting = important
 other: {
-  val = $^^root_setting   # points outside other
+  val = $^^.root_setting   # points outside other
 }
-copy := $other   # error: $^^root_setting resolves outside the cloned subtree
+copy := $other   # error: $^^.root_setting resolves outside the cloned subtree
 ```
 
 ### Forward References
@@ -635,7 +636,8 @@ Use the `x-` prefix for organization-specific schema codes (e.g., `x-acme-deploy
 | `-key` | Delete property | `-deprecated_field` |
 | `-...` | Delete all properties | `-...` |
 | `$path` | Reference (absolute) | `timeout = $defaults.timeout` |
-| `$^path` | Reference (relative) | `host = $^^server.host` |
+| `$^` | Reference to parent | `link = $^` |
+| `$^.path` | Reference (relative) | `host = $^^.server.host` |
 | `$arr[0]` | Reference with index | `first = $items[0]` |
 | `= $ref` | Link (shared, read-only) | `link = $other.node` |
 | `:= $ref` | Clone (independent copy) | `copy := $base` |

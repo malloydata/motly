@@ -57,14 +57,14 @@
   {
     "name": "reference validation passes",
     "steps": [
-      {"action": "parse", "input": "outer { value = hello  inner { ref = $^value } }"},
+      {"action": "parse", "input": "outer { value = hello  inner { ref = $^.value } }"},
       {"action": "finish"}
     ]
   },
   {
     "name": "reference validation errors in finish",
     "steps": [
-      {"action": "parse", "input": "a { ref = $^missing }"},
+      {"action": "parse", "input": "a { ref = $^.missing }"},
       {"action": "finish", "expectedErrors": [{"code": "unresolved-reference"}]}
     ]
   },
@@ -208,9 +208,16 @@
   {
     "name": "forward clone with relative ref inside",
     "steps": [
-      {"action": "parse", "input": "copy := $base\nbase { shared = internal\n primary { host = $^shared } }"},
+      {"action": "parse", "input": "copy := $base\nbase { shared = internal\n primary { host = $^.shared } }"},
       {"action": "finish"},
       {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"shared": {"eq": "internal"}, "primary": {"properties": {"host": {"linkTo": ["shared"], "linkUps": 1}}}}}, "base": {"properties": {"shared": {"eq": "internal"}, "primary": {"properties": {"host": {"linkTo": ["shared"], "linkUps": 1}}}}}}}}
+    ]
+  },
+  {
+    "name": "clone boundary catches escaping reference hidden behind a link",
+    "steps": [
+      {"action": "parse", "input": "global = 1\ntemplate { smuggled = $^^.global }\ninnocent_link = $template\nTrojanHorse := $innocent_link"},
+      {"action": "finish", "expectedErrors": [{"code": "clone-reference-out-of-scope"}]}
     ]
   }
 ]

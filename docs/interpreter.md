@@ -278,14 +278,14 @@ produces a `clone-reference-out-of-scope` error.
 # OK — resolves within the subtree
 base: {
   shared = "db.internal"
-  primary: { host = $^shared }
+  primary: { host = $^.shared }
 }
 copy := $base
 
 # Error — escapes the subtree
 root_val = important
-other: { val = $^^root_val }
-copy := $other   # error: $^^root_val resolves outside
+other: { val = $^^.root_val }
+copy := $other   # error: $^^.root_val resolves outside
 ```
 
 ## Error codes

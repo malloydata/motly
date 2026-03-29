@@ -1048,6 +1048,15 @@ impl<'a> Parser<'a> {
             ups += 1;
         }
 
+        // Relative refs ($^, $^^, etc.) require a dot before the path.
+        // If no dot follows, the reference targets the ancestor itself (empty path).
+        if ups > 0 {
+            if self.peek_char() != Some('.') {
+                return Ok(ScalarValue::Reference { ups, path: vec![] });
+            }
+            self.advance(1); // consume the '.'
+        }
+
         let mut path = Vec::new();
         let first_name = self.parse_identifier()?;
         path.push(RefPathSegment::Name(first_name));

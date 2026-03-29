@@ -22,7 +22,7 @@ export type MOTLYScalar = string | number | boolean | Date;
 /** A segment in a reference path: a property name (string) or an array index (number). */
 export type MOTLYRefSegment = string | number;
 
-/** A reference to another node in the MOTLY tree (e.g. `$^parent.name`). */
+/** A reference to another node in the MOTLY tree (e.g. `$^.parent.name`). */
 export interface MOTLYRef {
   linkTo: MOTLYRefSegment[];
   linkUps: number;
@@ -84,14 +84,14 @@ export interface MOTLYSchemaError {
   location?: MOTLYLocation;
 }
 
-/** Format a MOTLYRef for display (e.g. `$^^parent.name`). */
+/** Format a MOTLYRef for display (e.g. `$^^.parent.name`). */
 export function formatRef(link: MOTLYRef): string {
   let s = "$";
   for (let i = 0; i < link.linkUps; i++) s += "^";
   let first = true;
   for (const seg of link.linkTo) {
     if (typeof seg === "string") {
-      if (!first) s += ".";
+      if (!first || link.linkUps > 0) s += ".";
       s += seg;
       first = false;
     } else {

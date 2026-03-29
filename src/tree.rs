@@ -151,7 +151,7 @@ impl MOTLYNode {
     }
 }
 
-/// Format a RefSegment slice for display: `$^^name[0].sub`
+/// Format a RefSegment slice for display: `$^^.name[0].sub`
 pub fn format_ref_display(ups: usize, segments: &[RefSegment]) -> String {
     let mut s = String::from("$");
     for _ in 0..ups {
@@ -161,7 +161,7 @@ pub fn format_ref_display(ups: usize, segments: &[RefSegment]) -> String {
     for seg in segments {
         match seg {
             RefSegment::Name(name) => {
-                if !first {
+                if !first || ups > 0 {
                     s.push('.');
                 }
                 s.push_str(name);

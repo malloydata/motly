@@ -1,12 +1,12 @@
 [
   {
     "name": "valid sibling reference",
-    "input": "outer { value = hello  inner { ref = $^value } }",
+    "input": "outer { value = hello  inner { ref = $^.value } }",
     "expectedErrors": []
   },
   {
     "name": "unresolved reference",
-    "input": "a { ref = $^missing }",
+    "input": "a { ref = $^.missing }",
     "expectedErrors": [{"code": "unresolved-reference", "path": ["a", "ref"]}]
   },
   {
@@ -31,7 +31,12 @@
   },
   {
     "name": "valid relative up two levels",
-    "input": "root = hello  outer { inner { ref = $^^root } }",
+    "input": "root = hello  outer { inner { ref = $^^.root } }",
+    "expectedErrors": []
+  },
+  {
+    "name": "valid parent reference",
+    "input": "outer { value = hello  inner { ref = $^ } }",
     "expectedErrors": []
   },
   {
@@ -51,7 +56,7 @@
   },
   {
     "name": "relative too far up",
-    "input": "ref = $^^^^^way.too.far",
+    "input": "ref = $^^^^^.way.too.far",
     "expectedErrors": [{"code": "unresolved-reference", "path": ["ref"]}]
   },
   {
@@ -71,7 +76,7 @@
   },
   {
     "name": "cloned reference unresolvable at new location",
-    "input": "wrapper { sibling = hello  source { ref = $^sibling } }  copy := $wrapper.source",
+    "input": "wrapper { sibling = hello  source { ref = $^.sibling } }  copy := $wrapper.source",
     "expectedErrors": [{"code": "unresolved-reference", "path": ["copy", "ref"]}]
   }
 ]

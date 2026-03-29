@@ -226,7 +226,7 @@ npm run pack          # produces @malloydata/motly-ts-parser tarball
 ```
 Zero native dependencies. Uses Node.js built-in test runner (`node:test`).
 
-Tests live in `test/*.ts` and are compiled by a separate `test/tsconfig.json` (CommonJS, `rootDir: "."`, `outDir: "../build-test"`). The test script builds both the library and tests, then runs `node --test build-test/*.js`. Test files import from the *built* library at `../build/parser/src/index` (relative to the test source). `MOTLYRef` has structured `linkTo` (array of path segments) and `linkUps` (number of `^` levels) — e.g. `$^parent.name` becomes `{ linkTo: ["parent", "name"], linkUps: 1 }`.
+Tests live in `test/*.ts` and are compiled by a separate `test/tsconfig.json` (CommonJS, `rootDir: "."`, `outDir: "../build-test"`). The test script builds both the library and tests, then runs `node --test build-test/*.js`. Test files import from the *built* library at `../build/parser/src/index` (relative to the test source). `MOTLYRef` has structured `linkTo` (array of path segments) and `linkUps` (number of `^` levels) — e.g. `$^.parent.name` becomes `{ linkTo: ["parent", "name"], linkUps: 1 }`. `$^` alone (no dot, no path) means "my parent" with `linkTo: [], linkUps: 1`.
 
 ## Shared Test Fixtures
 

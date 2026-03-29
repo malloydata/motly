@@ -12,6 +12,7 @@ Changes from the previous grammar:
 - **Removed** `propName "=" [ "..." ] properties` from `replaceProps` (was a synonym for `:`; confusing under new semantics where `=` only touches the value).
 - **Removed** `"{" "..." "}"` from `properties` (the `{ ... }` preserve-properties form is superseded by the orthogonality of `=` and `:`).
 - **Renamed** statement productions for clarity: `assignValue`, `assignBoth`, `replaceProps`, `mergeProps`.
+- **Changed** `reference` to split absolute vs. relative: `$path` (absolute, unchanged) vs. `$^[^]* [ "." refPath ]` (relative, dot-separated). `$^` alone is now a valid reference meaning "my parent". This makes `$^` a first-class linkable value.
 
 ```ebnf
 (* Entry point — commas are optional separators between statements *)
@@ -72,7 +73,8 @@ date            ::= "@" isoDate
 number          ::= [ "-" ] digits [ "." digits ] [ exponent ]
                   | [ "-" ] "." digits [ exponent ]
 string          ::= tripleString | tripleSingleString | heredocString | sqString | dqString | bareString
-reference       ::= "$" { "^" } refPath
+reference       ::= "$" refPath
+                  | "$" "^" { "^" } [ "." refPath ]
 refPath         ::= refElement { "." refElement }
 refElement      ::= identifier [ "[" digits "]" ]
 

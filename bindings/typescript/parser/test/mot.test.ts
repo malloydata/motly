@@ -360,12 +360,12 @@ describe("Mot", () => {
     });
 
     it("resolves relative ^ ref", () => {
-      const m = mot("parent { x = 1\n inner { child = $^x } }");
+      const m = mot("parent { x = 1\n inner { child = $^.x } }");
       assert.equal(m.get("parent", "inner", "child").numeric(), 1);
     });
 
     it("resolves $^^ (two ups)", () => {
-      const m = mot("x = root_x\n a { b { ref = $^^x } }");
+      const m = mot("x = root_x\n a { b { ref = $^^.x } }");
       assert.equal(m.get("a", "b", "ref").text(), "root_x");
     });
 
@@ -377,7 +377,7 @@ describe("Mot", () => {
     });
 
     it("resolves multi-segment absolute ref to a chained relative ref", () => {
-      const m = mot("a { y = found\n b { c = $^y } }\nalias = $a.b.c");
+      const m = mot("a { y = found\n b { c = $^.y } }\nalias = $a.b.c");
       assert.equal(m.get("alias").text(), "found");
     });
 
@@ -386,8 +386,20 @@ describe("Mot", () => {
       assert.equal(m.get("a").exists, false);
     });
 
+    it("$^ alone references parent node", () => {
+      const m = mot("parent { x = 1\n inner { ref = $^ } }");
+      // $^ from inner points to parent, which has x=1
+      assert.equal(m.get("parent", "inner", "ref", "x").numeric(), 1);
+    });
+
+    it("$^ clone copies parent scope", () => {
+      const m = mot("parent { a = 1\n child { clone := $^ } }");
+      // clone := $^ from child clones parent
+      assert.equal(m.get("parent", "child", "clone", "a").numeric(), 1);
+    });
+
     it("^ ref that escapes root returns Undefined Mot", () => {
-      const m = mot("a = $^x");
+      const m = mot("a = $^.x");
       assert.equal(m.get("a").exists, false);
     });
 
@@ -406,7 +418,7 @@ describe("Mot", () => {
     });
 
     it("resolves backtick-quoted ^ property via relative ref", () => {
-      const m = mot("a { `^` = 7\n b { y = $^`^` } }");
+      const m = mot("a { `^` = 7\n b { y = $^.`^` } }");
       assert.equal(m.get("a", "b", "y").numeric(), 7);
     });
   });

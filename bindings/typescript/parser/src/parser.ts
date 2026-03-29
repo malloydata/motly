@@ -920,6 +920,15 @@ class Parser {
       ups++;
     }
 
+    // Relative refs ($^, $^^, etc.) require a dot before the path.
+    // If no dot follows, the reference targets the ancestor itself (empty path).
+    if (ups > 0) {
+      if (this.peekChar() !== ".") {
+        return { kind: "reference", ups, path: [] };
+      }
+      this.advance(1); // consume the '.'
+    }
+
     const path: RefPathSegment[] = [];
     const firstName = this.parseIdentifier();
     path.push({ kind: "name", name: firstName });
