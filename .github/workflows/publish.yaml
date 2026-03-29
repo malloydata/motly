@@ -6,10 +6,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20.x
+          node-version: 22.x
       - name: Build and test
         run: |
           cd bindings/typescript/interface && npm ci --loglevel error && npm run build && cd -
@@ -19,10 +19,10 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20.x
+          node-version: 22.x
           registry-url: https://registry.npmjs.org
       - name: Build and publish
         run: |
