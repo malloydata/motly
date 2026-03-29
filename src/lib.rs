@@ -10,7 +10,11 @@ pub mod validate;
 use error::MOTLYError;
 use tree::MOTLYDataNode;
 
-pub use interpreter::{ExecContext, SessionOptions};
+pub use interpreter::{
+    ExecContext, SessionOptions, Transformer,
+    flatten, chunk, topo_sort, execute_chunked,
+    ChunkResult, TopoSortResult,
+};
 pub use validate::{validate_references, validate_schema, SchemaError, ValidationError};
 
 // ── Core API ───────────────────────────────────────────────────────
@@ -21,16 +25,22 @@ pub struct MOTLYResult {
     pub errors: Vec<MOTLYError>,
 }
 
-/// Parse MOTLY source and execute statements against the given value,
-/// returning the updated value and any errors (parse errors + non-fatal execution errors).
+/// Parse MOTLY source and execute against the given value using the four-phase
+/// interpreter. Returns the updated value and any errors.
 pub fn parse_motly(input: &str, mut value: MOTLYDataNode, ctx: &ExecContext) -> MOTLYResult {
     match parser::parse(input) {
         Ok(stmts) => {
-            let exec_errors = interpreter::execute(&stmts, &mut value, ctx);
-            MOTLYResult {
-                value,
-                errors: exec_errors,
-            }
+            let transformers = flatten(&stmts, ctx);
+            let chunk_result = chunk(&transformers);
+            let sort_result = topo_sort(&chunk_result.deps);
+            let errors = execute_chunked(
+                &transformers,
+                &chunk_result.splits,
+                &sort_result.order,
+                &mut value,
+                &ctx.options,
+            );
+            MOTLYResult { value, errors }
         }
         Err(err) => MOTLYResult {
             value,
@@ -52,6 +62,10 @@ pub extern "C" fn alloc(len: usize) -> *mut u8 {
 /// Free a buffer previously returned by `alloc` or by any of the
 /// `wasm_*` functions. For null-terminated strings returned by those
 /// functions, pass `strlen(ptr) + 1` as `len`.
+///
+/// # Safety
+/// `ptr` must have been returned by `alloc` or a `wasm_*` function,
+/// and `len` must match the original allocation size.
 #[no_mangle]
 pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: usize) {
     let layout = std::alloc::Layout::from_size_align(len, 1).unwrap();
@@ -60,14 +74,23 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: usize) {
 
 // ── Session-based WASM FFI ──────────────────────────────────────────
 
+use crate::ast::Statement;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+struct AccumulatedParse {
+    stmts: Vec<Statement>,
+    parse_id: u32,
+}
+
 struct Session {
+    accumulated: Vec<AccumulatedParse>,
     value: MOTLYDataNode,
     schema: Option<MOTLYDataNode>,
     next_parse_id: u32,
     options: SessionOptions,
+    finished: bool,
 }
 
 // WASM is single-threaded, so thread_local is just a convenient safe wrapper.
@@ -107,18 +130,23 @@ pub extern "C" fn wasm_session_new_with_options(flags: u32) -> u32 {
         s.insert(
             id,
             Session {
+                accumulated: Vec::new(),
                 value: MOTLYDataNode::new(),
                 schema: None,
                 next_parse_id: 0,
                 options,
+                finished: false,
             },
         )
     });
     id
 }
 
-/// Parse source and apply it to the session's value in place.
+/// Parse source and accumulate statements. Returns only syntax errors.
 /// Returns a pointer to a null-terminated JSON object: `{"parseId":N,"errors":[...]}`.
+///
+/// # Safety
+/// `src_ptr` must point to a valid UTF-8 byte sequence of length `src_len`.
 #[no_mangle]
 pub unsafe extern "C" fn wasm_session_parse(
     id: u32,
@@ -129,32 +157,119 @@ pub unsafe extern "C" fn wasm_session_parse(
         let slice = std::slice::from_raw_parts(src_ptr, src_len);
         std::str::from_utf8_unchecked(slice)
     };
-    let (value, ctx) = with_sessions(|s| match s.get_mut(&id) {
+    let parse_id = with_sessions(|s| match s.get_mut(&id) {
+        Some(session) if session.finished => None,
         Some(session) => {
             let pid = session.next_parse_id;
             session.next_parse_id += 1;
-            Some((
-                std::mem::replace(&mut session.value, MOTLYDataNode::new()),
-                ExecContext { parse_id: pid, options: session.options.clone() },
-            ))
+            Some(pid)
         }
         None => None,
-    })
-    .unwrap_or_else(|| {
-        (MOTLYDataNode::new(), ExecContext { parse_id: 0, options: SessionOptions::default() })
     });
-    let result = parse_motly(input, value, &ctx);
-    with_sessions(|s| {
-        if let Some(session) = s.get_mut(&id) {
-            session.value = result.value;
+    let parse_id = match parse_id {
+        Some(pid) => pid,
+        None => {
+            return string_to_c_ptr(json::parse_result_to_json(0, &[MOTLYError {
+                code: "session-error".to_string(),
+                message: "Session is spent after finish() — create a new session".to_string(),
+                begin: error::Position { line: 0, column: 0, offset: 0 },
+                end: error::Position { line: 0, column: 0, offset: 0 },
+            }]));
+        }
+    };
+    match parser::parse(input) {
+        Ok(stmts) => {
+            with_sessions(|s| {
+                if let Some(session) = s.get_mut(&id) {
+                    session.accumulated.push(AccumulatedParse { stmts, parse_id });
+                }
+            });
+            let json_str = json::parse_result_to_json(parse_id, &[]);
+            string_to_c_ptr(json_str)
+        }
+        Err(err) => {
+            let json_str = json::parse_result_to_json(parse_id, &[err]);
+            string_to_c_ptr(json_str)
+        }
+    }
+}
+
+/// Interpret all accumulated statements using the four-phase engine,
+/// validate references, and store the result.
+/// Returns a pointer to a null-terminated JSON object: `{"errors":[...]}`.
+#[no_mangle]
+pub extern "C" fn wasm_session_finish(id: u32) -> *const u8 {
+    let session_data = with_sessions(|s| {
+        match s.get_mut(&id) {
+            Some(session) if session.finished => None,
+            Some(session) => {
+                session.finished = true;
+                let accumulated = std::mem::take(&mut session.accumulated);
+                let options = session.options.clone();
+                Some((accumulated, options))
+            }
+            None => None,
         }
     });
-    let json_str = json::parse_result_to_json(ctx.parse_id, &result.errors);
+    let (accumulated, options) = match session_data {
+        Some(data) => data,
+        None => return string_to_c_ptr("{\"errors\":[]}".to_string()),
+    };
+
+    let mut root = MOTLYDataNode::new();
+    let mut all_errors: Vec<MOTLYError> = Vec::new();
+
+    // Phase 1: Flatten all accumulated statements into transformers
+    let mut all_transformers: Vec<Transformer> = Vec::new();
+    for ap in &accumulated {
+        let ctx = ExecContext { parse_id: ap.parse_id, options: options.clone() };
+        all_transformers.extend(flatten(&ap.stmts, &ctx));
+    }
+
+    // Phase 2: Chunk
+    let chunk_result = chunk(&all_transformers);
+
+    // Phase 3: Topo-sort
+    let sort_result = topo_sort(&chunk_result.deps);
+
+    // Phase 4: Execute
+    let exec_errors = execute_chunked(
+        &all_transformers,
+        &chunk_result.splits,
+        &sort_result.order,
+        &mut root,
+        &options,
+    );
+    all_errors.extend(exec_errors);
+
+    // Validate references (unless disabled)
+    if !options.disable_references {
+        let ref_errors = validate_references(&root);
+        for re in ref_errors {
+            all_errors.push(MOTLYError {
+                code: re.code.to_string(),
+                message: re.message,
+                begin: error::Position { line: 0, column: 0, offset: 0 },
+                end: error::Position { line: 0, column: 0, offset: 0 },
+            });
+        }
+    }
+
+    with_sessions(|s| {
+        if let Some(session) = s.get_mut(&id) {
+            session.value = root;
+        }
+    });
+
+    let json_str = json::errors_to_json(&all_errors);
     string_to_c_ptr(json_str)
 }
 
 /// Parse MOTLY source as a schema and store it in the session.
 /// Returns a pointer to a null-terminated JSON object: `{"parseId":N,"errors":[...]}`.
+///
+/// # Safety
+/// `src_ptr` must point to a valid UTF-8 byte sequence of length `src_len`.
 #[no_mangle]
 pub unsafe extern "C" fn wasm_session_parse_schema(
     id: u32,
@@ -169,7 +284,7 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
         Some(session) => {
             let pid = session.next_parse_id;
             session.next_parse_id += 1;
-            ExecContext { parse_id: pid, options: session.options.clone() }
+            ExecContext { parse_id: pid, options: SessionOptions { disable_references: true } }
         }
         None => ExecContext { parse_id: 0, options: SessionOptions::default() },
     });
@@ -240,12 +355,9 @@ pub extern "C" fn wasm_session_free(id: u32) {
 }
 
 /// Convert a String to a null-terminated C pointer with exact allocation size.
-/// The allocation size is exactly `s.len() + 1` bytes, so the caller can
-/// free with `dealloc(ptr, strlen(ptr) + 1)`.
 fn string_to_c_ptr(s: String) -> *const u8 {
     let mut bytes = s.into_bytes();
     bytes.push(0);
-    // into_boxed_slice guarantees allocation size == bytes.len()
     let boxed = bytes.into_boxed_slice();
     Box::into_raw(boxed) as *mut u8
 }
@@ -259,6 +371,57 @@ fn parse_motly_n(input: &str, value: MOTLYDataNode, parse_id: u32) -> MOTLYResul
 #[cfg(test)]
 fn parse_motly_0(input: &str, value: MOTLYDataNode) -> MOTLYResult {
     parse_motly_n(input, value, 0)
+}
+
+/// Full session lifecycle for tests: parse all inputs, run four-phase interpreter,
+/// optionally validate refs. Returns (value, all_errors).
+#[cfg(test)]
+fn session_finish_ex(inputs: &[&str], options: SessionOptions, validate_refs: bool) -> (MOTLYDataNode, Vec<MOTLYError>) {
+    let mut root = MOTLYDataNode::new();
+    let mut all_errors: Vec<MOTLYError> = Vec::new();
+    let mut all_transformers: Vec<Transformer> = Vec::new();
+
+    for (i, input) in inputs.iter().enumerate() {
+        match parser::parse(input) {
+            Ok(stmts) => {
+                let ctx = ExecContext { parse_id: i as u32, options: options.clone() };
+                all_transformers.extend(flatten(&stmts, &ctx));
+            }
+            Err(err) => {
+                all_errors.push(err);
+            }
+        }
+    }
+
+    let chunk_result = chunk(&all_transformers);
+    let sort_result = topo_sort(&chunk_result.deps);
+    let exec_errors = execute_chunked(
+        &all_transformers,
+        &chunk_result.splits,
+        &sort_result.order,
+        &mut root,
+        &options,
+    );
+    all_errors.extend(exec_errors);
+
+    if validate_refs && !options.disable_references {
+        let ref_errors = validate_references(&root);
+        for re in ref_errors {
+            all_errors.push(MOTLYError {
+                code: re.code.to_string(),
+                message: re.message,
+                begin: error::Position { line: 0, column: 0, offset: 0 },
+                end: error::Position { line: 0, column: 0, offset: 0 },
+            });
+        }
+    }
+
+    (root, all_errors)
+}
+
+#[cfg(test)]
+fn session_finish(inputs: &[&str], options: SessionOptions) -> (MOTLYDataNode, Vec<MOTLYError>) {
+    session_finish_ex(inputs, options, true)
 }
 
 #[cfg(test)]

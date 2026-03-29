@@ -24,7 +24,7 @@ session.parse(`
   tags = [web, api, production]
 `);
 
-const config = session.getMot();
+const config = session.finish().getMot();
 const port = config.get("server", "port").numeric();  // 8080
 const tags = config.get("tags").texts();              // ["web", "api", "production"]
 
@@ -35,7 +35,7 @@ const tags2 = config.texts("tags");                   // ["web", "api", "product
 
 ## MOTLYSession
 
-A stateful parsing session. Source text is parsed and accumulated into an internal value tree. An optional schema can be loaded for validation. The `Mot` read API provides typed, navigable access to the resolved tree.
+A write-only parsing session. Source text is parsed and accumulated into statements. Call `finish()` to interpret everything and get an immutable `MOTLYResult`. The session is spent after `finish()`.
 
 ### Constructor
 
@@ -54,9 +54,9 @@ const session = new MOTLYSession({ disableReferences: true });
 
 ### `parse(source: string): MOTLYParseResult`
 
-Parse MOTLY source and apply it to the session's value. Multiple calls accumulate — later statements merge with or override earlier ones.
+Parse MOTLY source and accumulate statements. Multiple calls accumulate — later statements merge with or override earlier ones. Semantic errors are deferred to `finish()`.
 
-Returns a `MOTLYParseResult` containing the assigned `parseId` and any errors.
+Returns a `MOTLYParseResult` containing the assigned `parseId` and any syntax errors.
 
 ```ts
 const session = new MOTLYSession();
@@ -64,53 +64,39 @@ let { errors } = session.parse("server { host = localhost }");
 ({ errors } = session.parse("server { port = 8080 }"));  // merges with existing
 ```
 
-### `parseSchema(source: string): MOTLYParseResult`
+### `finish(): MOTLYResult`
 
-Parse MOTLY source as a schema. Replaces any previously loaded schema. The schema is parsed fresh (not merged with previous schemas).
-
-```ts
-session.parseSchema(`
-  Required {
-    server {
-      Required {
-        host = string
-        port = number
-      }
-    }
-  }
-`);
-```
-
-### `validateReferences(): MOTLYValidationError[]`
-
-Check that all `$`-references in the value tree resolve to existing nodes. Returns an array of validation errors.
+Interpret all accumulated statements, resolve references, and return an immutable `MOTLYResult`. The session is spent after this call — create a new session to start over.
 
 ```ts
-const refErrors = session.validateReferences();
-for (const err of refErrors) {
-  console.log(err.code, err.path.join("."), err.message);
+const result = session.finish();
+if (result.errors.length > 0) {
+  // handle interpretation/reference errors
 }
 ```
 
-### `validateSchema(): MOTLYSchemaError[]`
+### `dispose(): void`
 
-Validate the value tree against the loaded schema. Returns an empty array if no schema has been set.
+Mark the session as disposed. After calling `dispose()`, all other methods throw. `dispose()` itself is idempotent. For the pure TS implementation this is a no-op (no native resources to free), but calling it enables consistent lifecycle management across backends.
 
-```ts
-const schemaErrors = session.validateSchema();
-for (const err of schemaErrors) {
-  console.log(err.code, err.path.join("."), err.message);
-}
-```
+## MOTLYResult
 
-Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `ref-not-allowed`.
+Immutable result from `MOTLYSession.finish()`. All interpretation and reference resolution has already happened.
+
+### `errors: MOTLYError[]`
+
+Interpretation and reference validation errors.
+
+### `getValue(): MOTLYDataNode`
+
+Return a deep clone of the raw, unresolved parse tree. This is the low-level representation with refs, env refs, and deleted nodes still present. Most consumers should use `getMot()` instead.
 
 ### `getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M`
 
-Return a resolved `Mot` view of the current value tree. All references followed, environment variables substituted, deletions consumed.
+Return a resolved `Mot` view of the tree. All references followed, environment variables substituted, deletions consumed.
 
 ```ts
-const config = session.getMot({
+const config = result.getMot({
   env: { API_KEY: "secret", DB_HOST: "db.example.com" }
 });
 ```
@@ -119,19 +105,45 @@ The `env` option provides values for `@env.NAME` references. Missing env vars pr
 
 Pass a `MotFactory` via `options.factory` to control what objects are created (e.g., Tags with read tracking). Without a factory, returns plain Mot instances. See [MotFactory](#motfactory) for details.
 
-`getMot()` is forgiving — it always succeeds. Unresolved references produce the Undefined Mot at that position. To detect problems, call `validateReferences()` and `validateSchema()` before `getMot()`.
+`getMot()` is forgiving — it always succeeds. Unresolved references produce the Undefined Mot at that position. To detect problems, check `result.errors` before calling `getMot()`.
 
-### `getValue(): MOTLYDataNode`
+## MOTLYSchema
 
-Return a deep clone of the raw, unresolved parse tree. This is the low-level representation with refs, env refs, and deleted nodes still present. Most consumers should use `getMot()` instead.
+A parsed schema, independent of any session. Parse once, validate any number of trees.
 
-### `reset(): void`
+### `MOTLYSchema.parse(source: string)`
 
-Clear the value tree to empty, keeping the schema.
+Parse MOTLY source as a schema. Returns the schema and any errors.
 
-### `dispose(): void`
+```ts
+import { MOTLYSchema } from "@malloydata/motly-ts-parser";
 
-Mark the session as disposed. After calling `dispose()`, all other methods throw. `dispose()` itself is idempotent. For the pure TS implementation this is a no-op (no native resources to free), but calling it enables consistent lifecycle management across backends.
+const { schema, errors } = MOTLYSchema.parse(`
+  REQUIRED {
+    server {
+      REQUIRED {
+        host = string
+        port = number
+      }
+    }
+  }
+`);
+```
+
+Schemas always have references disabled — they use `TYPES` for reuse, not `$`-references.
+
+### `validate(tree: MOTLYDataNode): MOTLYSchemaError[]`
+
+Validate a data tree against this schema.
+
+```ts
+const schemaErrors = schema.validate(result.getValue());
+for (const err of schemaErrors) {
+  console.log(err.code, err.path.join("."), err.message);
+}
+```
+
+Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `ref-not-allowed`.
 
 ## Mot
 
@@ -299,7 +311,7 @@ The factory's `createMot` receives a resolved value and a mutable properties `Ma
 The factory's `createRefMot` is called for `$`-reference nodes. The `ref` argument contains the reference data (`linkUps` and `linkTo`); the `target` is the resolved Mot. The factory can wrap the target in a delegate (to preserve reference structure for serialization), return the target directly (to flatten refs), or return `undefinedMot` (to exclude refs from the tree).
 
 ```ts
-const mot = session.getMot({ factory: myFactory });
+const mot = result.getMot({ factory: myFactory });
 ```
 
 ## References and Environment Variables
@@ -314,7 +326,7 @@ References and env refs are resolved before the `Mot` is returned. The consumer 
 
 ### `MOTLYParseResult`
 
-Returned by `parse()` and `parseSchema()`.
+Returned by `parse()`.
 
 ```ts
 interface MOTLYParseResult {
@@ -325,7 +337,7 @@ interface MOTLYParseResult {
 
 ### `MOTLYError`
 
-A parse error with source location.
+A parse or interpretation error with source location.
 
 ```ts
 interface MOTLYError {
@@ -363,31 +375,30 @@ interface MOTLYValidationError {
 ## Complete Example
 
 ```ts
-import { MOTLYSession } from "@malloydata/motly-ts-parser";
+import { MOTLYSession, MOTLYSchema } from "@malloydata/motly-ts-parser";
 
-const session = new MOTLYSession();
-
-// Load schema
-session.parseSchema(`
-  Required {
+// Load schema (independent of session)
+const { schema } = MOTLYSchema.parse(`
+  REQUIRED {
     database {
-      Required {
+      REQUIRED {
         host = string
         port = number
       }
-      Optional {
+      OPTIONAL {
         name = string
       }
     }
   }
-  Optional {
+  OPTIONAL {
     features {
-      Additional = flag
+      ADDITIONAL = flag
     }
   }
 `);
 
 // Load config
+const session = new MOTLYSession();
 session.parse(`
   database {
     host = @env.DB_HOST
@@ -400,10 +411,12 @@ session.parse(`
   }
 `);
 
+const result = session.finish();
+
 // Validate
 const errors = [
-  ...session.validateReferences(),
-  ...session.validateSchema(),
+  ...result.errors,
+  ...schema.validate(result.getValue()),
 ];
 if (errors.length > 0) {
   for (const e of errors) console.error(e.message);
@@ -411,7 +424,7 @@ if (errors.length > 0) {
 }
 
 // Read
-const config = session.getMot({ env: process.env });
+const config = result.getMot({ env: process.env });
 
 const dbHost = config.text("database", "host");     // from DB_HOST env var
 const dbPort = config.numeric("database", "port");   // 5432

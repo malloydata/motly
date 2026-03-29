@@ -350,7 +350,7 @@ impl<'a> Parser<'a> {
         self.input[self.pos..]
             .chars()
             .nth(offset)
-            .map_or(false, is_bare_char)
+            .is_some_and(is_bare_char)
     }
 
     fn parse_date(&mut self, begin: Position) -> Result<ScalarValue, MOTLYError> {

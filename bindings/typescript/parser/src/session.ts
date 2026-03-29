@@ -5,113 +5,103 @@ import {
   MOTLYParseResult,
   MOTLYSessionOptions,
   MOTLYSchemaError,
-  MOTLYValidationError,
 } from "../../interface/src/types";
+import { Statement } from "./ast";
 import { parse } from "./parser";
-import { execute, ExecContext } from "./interpreter";
+import { ExecContext, flatten, chunk, topoSort, executeChunked, Transformer } from "./interpreter";
 import { validateReferences, validateSchema } from "./validate";
 import { cloneNode } from "./clone";
 import { Mot, GetMotOptions, buildMot } from "./mot";
 
 /**
- * A stateful MOTLY parsing session.
+ * A write-only MOTLY parsing session that accumulates input.
  *
- * Pure TypeScript implementation — no WASM, no native dependencies.
- * API-compatible with the Rust `MotlySession`.
+ * Call `parse()` to accumulate statements, then `finish()` to interpret
+ * everything and get an immutable `MOTLYResult`. The session is spent
+ * after `finish()` — create a new one to start over.
  */
 export class MOTLYSession {
-  private value: MOTLYDataNode = {};
-  private schema: MOTLYDataNode | null = null;
-  private disposed = false;
+  private accumulated: { stmts: Statement[]; parseId: number }[] = [];
   private nextParseId = 0;
   private options: MOTLYSessionOptions;
+  private finished = false;
+  private disposed = false;
 
   constructor(options?: MOTLYSessionOptions) {
     this.options = options ?? {};
   }
 
   /**
-   * Parse MOTLY source and apply it to the session's value in place.
-   * Returns the assigned parseId and any parse/execution errors.
+   * Parse MOTLY source and accumulate statements.
+   * Returns only syntax errors — semantic errors are deferred to `finish()`.
    */
   parse(source: string): MOTLYParseResult {
     this.ensureAlive();
-    const ctx = this.makeContext();
+    if (this.finished) {
+      throw new Error("MOTLYSession is spent after finish() — create a new session");
+    }
+    const parseId = this.nextParseId++;
     try {
       const stmts = parse(source);
-      const errors = execute(stmts, this.value, ctx);
-      return { parseId: ctx.parseId, errors };
+      this.accumulated.push({ stmts, parseId });
+      return { parseId, errors: [] };
     } catch (e) {
-      if (isMotlyError(e)) return { parseId: ctx.parseId, errors: [e] };
+      if (isMotlyError(e)) return { parseId, errors: [e] };
       throw e;
     }
   }
 
   /**
-   * Parse MOTLY source as a schema and store it in the session.
-   * The schema is parsed fresh (not merged).
+   * Interpret all accumulated statements, resolve references, and return
+   * an immutable result. The session is spent after this call.
    */
-  parseSchema(source: string): MOTLYParseResult {
+  finish(): MOTLYResult {
     this.ensureAlive();
-    const ctx = this.makeContext();
-    try {
-      const stmts = parse(source);
-      const fresh: MOTLYDataNode = {};
-      const errors = execute(stmts, fresh, ctx);
-      this.schema = fresh;
-      return { parseId: ctx.parseId, errors };
-    } catch (e) {
-      if (isMotlyError(e)) return { parseId: ctx.parseId, errors: [e] };
-      throw e;
+    if (this.finished) {
+      throw new Error("finish() has already been called on this session");
     }
-  }
+    this.finished = true;
 
-  /**
-   * Reset the session's value to empty, keeping the schema.
-   */
-  reset(): void {
-    this.ensureAlive();
-    this.value = {};
-  }
+    const allErrors: MOTLYError[] = [];
+    const root: MOTLYDataNode = {};
 
-  /**
-   * Return a deep clone of the session's current value.
-   */
-  getValue(): MOTLYDataNode {
-    this.ensureAlive();
-    return cloneNode(this.value);
-  }
+    // Phase 1: Flatten all accumulated statements into transformers
+    const allTransformers: Transformer[] = [];
+    for (const { stmts, parseId } of this.accumulated) {
+      const ctx: ExecContext = {
+        parseId,
+        options: { disableReferences: this.options.disableReferences },
+      };
+      allTransformers.push(...flatten(stmts, ctx));
+    }
 
-  /**
-   * Validate the session's value against its stored schema.
-   * Returns an empty array if no schema has been set.
-   */
-  validateSchema(): MOTLYSchemaError[] {
-    this.ensureAlive();
-    if (this.schema === null) return [];
-    return validateSchema(this.value, this.schema);
-  }
+    // Phase 2: Chunk — find forward references, build splits + deps
+    const { splits, deps } = chunk(allTransformers);
 
-  /**
-   * Validate that all `$`-references in the session's value resolve.
-   */
-  validateReferences(): MOTLYValidationError[] {
-    this.ensureAlive();
-    return validateReferences(this.value);
-  }
+    // Phase 3: Topo-sort — dependency-respecting execution order
+    // Cycles among chunks are rare (the chunker treats one direction of a
+    // mutual clone as backward). Clone cycles are detected post-execution
+    // by replaceCircularCloneErrors; link cycles are caught by validateReferences.
+    const { order } = topoSort(deps);
 
-  /**
-   * Return a resolved Mot view of the current value.
-   * Follows references, resolves env refs, and omits deleted nodes.
-   *
-   * Pass a {@link MotFactory} via `options.factory` to control what
-   * objects are created (e.g., Tags with read tracking). Without a
-   * factory, returns plain Mot instances.
-   */
-  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M {
-    this.ensureAlive();
-    const tree = this.getValue();
-    return buildMot(tree, options as GetMotOptions) as M;
+    // Phase 4: Execute chunks in sorted order
+    const execErrors = executeChunked(allTransformers, splits, order, root, this.options);
+    allErrors.push(...execErrors);
+
+    // Validate references (unless disabled)
+    if (!this.options.disableReferences) {
+      const refErrors = validateReferences(root);
+      for (const re of refErrors) {
+        allErrors.push({
+          code: re.code,
+          message: re.message,
+          begin: { line: 0, column: 0, offset: 0 },
+          end: { line: 0, column: 0, offset: 0 },
+        });
+      }
+    }
+
+    return new MOTLYResult(root, allErrors);
   }
 
   /**
@@ -122,19 +112,81 @@ export class MOTLYSession {
     this.disposed = true;
   }
 
-  private makeContext(): ExecContext {
-    return {
-      parseId: this.nextParseId++,
-      options: {
-        disableReferences: this.options.disableReferences,
-      },
-    };
-  }
-
   private ensureAlive(): void {
     if (this.disposed) {
       throw new Error("MOTLYSession has been disposed");
     }
+  }
+}
+
+/**
+ * Immutable result from `MOTLYSession.finish()`.
+ * All the heavy lifting (interpretation, reference resolution) has already happened.
+ */
+export class MOTLYResult {
+  readonly errors: MOTLYError[];
+  private value: MOTLYDataNode;
+
+  /** @internal */
+  constructor(value: MOTLYDataNode, errors: MOTLYError[]) {
+    this.value = value;
+    this.errors = errors;
+  }
+
+  /** Return a deep clone of the interpreted tree. */
+  getValue(): MOTLYDataNode {
+    return cloneNode(this.value);
+  }
+
+  /**
+   * Return a resolved Mot view of the tree.
+   * Follows references lazily on read. Unresolved refs become Undefined Mot.
+   */
+  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M {
+    const tree = this.getValue();
+    return buildMot(tree, options as GetMotOptions) as M;
+  }
+}
+
+/**
+ * A parsed MOTLY schema, independent of any session.
+ *
+ * Schemas use TYPES for reuse, not $-references. Link refs (`= $ref`)
+ * produce errors; clones (`:= $ref`) are allowed for backward references.
+ */
+export class MOTLYSchema {
+  private tree: MOTLYDataNode;
+
+  private constructor(tree: MOTLYDataNode) {
+    this.tree = tree;
+  }
+
+  /**
+   * Parse MOTLY source as a schema.
+   * Returns the schema and any parse/interpretation errors.
+   */
+  static parse(source: string): { schema: MOTLYSchema; errors: MOTLYError[] } {
+    const options = { disableReferences: true };
+    const ctx: ExecContext = { parseId: 0, options };
+    try {
+      const stmts = parse(source);
+      const root: MOTLYDataNode = {};
+      const transformers = flatten(stmts, ctx);
+      const { splits, deps } = chunk(transformers);
+      const { order } = topoSort(deps);
+      const errors = executeChunked(transformers, splits, order, root, options);
+      return { schema: new MOTLYSchema(root), errors };
+    } catch (e) {
+      if (isMotlyError(e)) {
+        return { schema: new MOTLYSchema({}), errors: [e] };
+      }
+      throw e;
+    }
+  }
+
+  /** Validate a MOTLY data tree against this schema. */
+  validate(tree: MOTLYDataNode): MOTLYSchemaError[] {
+    return validateSchema(tree, this.tree);
   }
 }
 

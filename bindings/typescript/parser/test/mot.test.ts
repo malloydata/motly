@@ -5,7 +5,7 @@ import { MOTLYSession } from "../build/parser/src/index";
 function mot(source: string, env?: Record<string, string | undefined>) {
   const s = new MOTLYSession();
   s.parse(source);
-  return s.getMot({ env });
+  return s.finish().getMot({ env });
 }
 
 describe("Mot", () => {
@@ -411,6 +411,55 @@ describe("Mot", () => {
     });
   });
 
+  describe("forward references", () => {
+    it("forward link resolves through Mot", () => {
+      const m = mot("ref = $target\ntarget = hello");
+      assert.equal(m.get("ref").text(), "hello");
+    });
+
+    it("forward clone copies target defined later", () => {
+      const m = mot("copy := $thing\nthing { x = 1  y = 2 }");
+      assert.equal(m.get("copy", "x").numeric(), 1);
+      assert.equal(m.get("copy", "y").numeric(), 2);
+    });
+
+    it("writes after forward clone override cloned values", () => {
+      const m = mot("x := $y\nx.z = 99\ny { z = 0 }");
+      assert.equal(m.get("x", "z").numeric(), 99);
+      assert.equal(m.get("y", "z").numeric(), 0);
+    });
+
+    it("multiple forward refs in one file", () => {
+      const m = mot("r1 := $t1\nr2 := $t2\nt1 { x = 1 }\nt2 { y = 2 }");
+      assert.equal(m.get("r1", "x").numeric(), 1);
+      assert.equal(m.get("r2", "y").numeric(), 2);
+    });
+
+    it("forward link across multi-parse session", () => {
+      const s = new MOTLYSession();
+      s.parse("ref = $target");
+      s.parse("target { val = found }");
+      const m = s.finish().getMot();
+      assert.equal(m.get("ref", "val").text(), "found");
+    });
+
+    it("forward clone with specialization replaces properties", () => {
+      const m = mot("copy := $thing { x = 99 }\nthing { x = 1  y = 2 }");
+      assert.equal(m.get("copy", "x").numeric(), 99);
+      assert.equal(m.get("copy", "y").exists, false);
+    });
+
+    it("circular clones produce circular-reference error", () => {
+      const s = new MOTLYSession();
+      s.parse("a := $b\nb := $a");
+      const result = s.finish();
+      assert.equal(result.errors.length, 1);
+      assert.equal(result.errors[0].code, "circular-reference");
+      assert.ok(result.errors[0].message.includes("a"));
+      assert.ok(result.errors[0].message.includes("b"));
+    });
+  });
+
   describe("env refs", () => {
     it("resolves @env from env map", () => {
       const m = mot("key = @env.MY_VAR", { MY_VAR: "custom" });
@@ -465,10 +514,10 @@ describe("Mot", () => {
   });
 
   describe("session integration", () => {
-    it("getMot throws after dispose", () => {
+    it("finish throws after dispose", () => {
       const s = new MOTLYSession();
       s.dispose();
-      assert.throws(() => s.getMot(), /disposed/);
+      assert.throws(() => s.finish(), /disposed/);
     });
   });
 });

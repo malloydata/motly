@@ -1,6 +1,5 @@
 /// Intermediate representation produced by the parser.
 /// Mirrors the TypeScript `TagStatement` types.
-
 use crate::error::Position;
 
 /// A source span (begin..end) within a single parse() call.

@@ -19,7 +19,7 @@ Both the Rust library and the TS parser expose an identical `MOTLYSession` API. 
 src/
   ast.rs           — AST types: ScalarValue, Statement, TagValue, ArrayElement, RefPathSegment, Span
   parser.rs        — Recursive descent parser, produces Vec<Statement> with source spans
-  interpreter.rs   — Executes statements against a MOTLYNode tree (mutates in place), sets source locations; defines SessionOptions + ExecContext
+  interpreter.rs   — Four-phase interpreter: flatten → chunk → topoSort → executeChunked; defines SessionOptions + ExecContext
   tree.rs          — Output types: MOTLYNode (enum: Data|Ref), MOTLYDataNode, Scalar, EqValue, MOTLYLocation
   validate.rs      — Reference validation + schema validation
   error.rs         — MOTLYError with Position spans (line, column, offset)
@@ -40,7 +40,7 @@ bindings/typescript/
       session.ts       — MOTLYSession wrapping TS parser + interpreter + validator
       ast.ts           — TypeScript port of src/ast.rs
       parser.ts        — TypeScript port of src/parser.rs (~990 lines)
-      interpreter.ts   — TypeScript port of src/interpreter.rs (~310 lines)
+      interpreter.ts   — Four-phase interpreter (same architecture as Rust): flatten → chunk → topoSort → executeChunked (~1300 lines)
       validate.ts      — TypeScript port of src/validate.rs (~810 lines)
       mot.ts           — Mot abstract class + MotValue, MotRef, buildMot
       clone.ts         — Deep clone helpers for MOTLYNode trees
@@ -49,7 +49,8 @@ bindings/typescript/
 
 docs/
   language.md                — Complete MOTLY language reference with EBNF grammar
-  schema_spec.md               — ALL-CAPS schema language specification (iteration 2)
+  interpreter.md             — Four-phase interpreter architecture (both Rust and TS)
+  schema_spec.md             — ALL-CAPS schema language specification (iteration 2)
   motly_schema.motly         — Self-validating meta-schema in the new format
 
 test-data/
@@ -58,7 +59,7 @@ test-data/
     parse-errors.json  — 14 entries: parse input → expected errors
     schema.json        — 118 entries: schema + input → expected validation errors
     refs.json          — 15 entries: input → expected reference validation errors
-    session.json       — 10 entries: multi-step session operations
+    session.json       — 28 entries: multi-step session operations (including forward reference, circular clone, write-through-link)
   k8s-deployment-schema.motly  — Example: Kubernetes deployment schema
   k8s-deployment-sample.motly  — Example: Kubernetes deployment config
 ```
@@ -89,6 +90,21 @@ source text → Parser → Vec<Statement> → Interpreter → MOTLYNode tree
 2. **Interpreter** (`interpreter.rs` / `interpreter.ts`): executes statements against a `MOTLYNode`, handling merge/replace/delete semantics. Takes an `ExecContext` (parse ID + `SessionOptions`) rather than threading individual parameters.
 3. **Validator** (`validate.rs` / `validate.ts`): optional schema validation and reference resolution
 
+### Four-phase interpreter
+
+Both implementations use a flatten-chunk-sort-execute engine to handle forward references (`$path` used before its target is defined). Full architecture: `docs/interpreter.md`.
+
+```
+Statements → flatten() → Transformer[] → chunk() → {splits, deps} → topoSort() → order → executeChunked()
+```
+
+1. **Flatten**: Walk AST depth-first, emit `(path, operation)` pairs called transformers. Pure — no tree mutation.
+2. **Chunk**: Scan for forward references. Each forward ref becomes a singleton chunk; cuts also placed at the last write to the target. Builds a dependency graph (reference edges + write-after-reference edges).
+3. **Sort**: Kahn's algorithm (FIFO for stable source ordering). Detects cycles.
+4. **Execute**: Apply chunks in sorted order. Post-execution pass detects circular clone dependencies (mutually unresolvable clones) and reports them as `circular-reference` errors.
+
+Most files have no forward references — the scan produces a single chunk that executes linearly with zero graph overhead.
+
 ### Key types
 
 **AST** (intermediate, not exposed):
@@ -108,7 +124,7 @@ The interpreter mutates the `MOTLYNode` tree in place (does not return a new val
 ### Source location tracking
 
 Every `MOTLYNode` carries an optional `location: MOTLYLocation` recording where it was first defined. A location contains:
-- `parseId` — which `parse()`/`parseSchema()` call produced this node (0-based, auto-incrementing per session)
+- `parseId` — which `parse()` call produced this node (0-based, auto-incrementing per session)
 - `begin` / `end` — `{ line, column, offset }` positions within that parse call's source text
 
 **Semantics:**
@@ -150,17 +166,25 @@ Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-sche
 
 ## MOTLYSession API
 
+The API uses a Session/Result split. `MOTLYSession` is write-only (accumulates input). Calling `finish()` interprets everything and returns an immutable `MOTLYResult`. The session is spent after `finish()`. Schema is a separate standalone object.
+
 ```typescript
 class MOTLYSession {
   constructor(options?: MOTLYSessionOptions);      // optional session options
-  parse(source: string): MOTLYParseResult;        // parse + apply to value, returns { parseId, errors }
-  parseSchema(source: string): MOTLYParseResult;  // parse as schema, returns { parseId, errors }
-  reset(): void;                                   // clear value, keep schema (parseId counter continues)
-  getValue(): MOTLYDataNode;                       // deep clone of current value (includes locations)
-  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M;  // resolved read-only view; factory for custom Mot impls
-  validateSchema(): MOTLYSchemaError[];            // validate value against schema
-  validateReferences(): MOTLYValidationError[];    // check all $-references resolve
+  parse(source: string): MOTLYParseResult;        // accumulate statements, returns { parseId, errors }
+  finish(): MOTLYResult;                           // interpret all accumulated input, return immutable result
   dispose(): void;                                 // free resources / mark dead
+}
+
+class MOTLYResult {
+  readonly errors: MOTLYError[];                   // interpretation + reference validation errors
+  getValue(): MOTLYDataNode;                       // deep clone of interpreted tree (includes locations)
+  getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M;  // resolved read-only view; factory for custom Mot impls
+}
+
+class MOTLYSchema {
+  static parse(source: string): { schema: MOTLYSchema; errors: MOTLYError[] };
+  validate(tree: MOTLYDataNode): MOTLYSchemaError[];
 }
 
 interface MOTLYSessionOptions {
@@ -168,11 +192,13 @@ interface MOTLYSessionOptions {
 }
 ```
 
+**`MOTLYSchema`**: Independent of sessions. Parse a schema once, validate any number of trees against it. Schemas always have `disableReferences: true` — they use `TYPES` for reuse, not `$`-references.
+
 **`disableReferences` option**: When `true`, using `$`-references (e.g. `name = $other`) produces a `ref-not-allowed` error. Clone syntax (`:= $ref`) is always allowed since it deep-copies without creating circular structures. Useful for consumers like Malloy that cannot handle `MOTLYRef` link nodes.
 
-**Breaking change**: `parse()` and `parseSchema()` now return `MOTLYParseResult` (`{ parseId: number, errors: MOTLYError[] }`) instead of `MOTLYError[]`. Callers must destructure: `const { parseId, errors } = session.parse(source)`.
+`parse()` returns `MOTLYParseResult` (`{ parseId: number, errors: MOTLYError[] }`). Callers must destructure: `const { parseId, errors } = session.parse(source)`.
 
-After `dispose()`, all methods throw. `dispose()` itself is idempotent.
+After `dispose()`, all methods throw. `dispose()` itself is idempotent. After `finish()`, `parse()` throws (session is spent).
 
 ## Build & Test
 

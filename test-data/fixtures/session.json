@@ -1,8 +1,9 @@
 [
   {
-    "name": "basic parse and getValue",
+    "name": "basic parse and finish",
     "steps": [
       {"action": "parse", "input": "name = hello"},
+      {"action": "finish"},
       {"action": "getValue", "expected": {"properties": {"name": {"eq": "hello"}}}}
     ]
   },
@@ -11,53 +12,40 @@
     "steps": [
       {"action": "parse", "input": "name = hello"},
       {"action": "parse", "input": "port = 8080"},
+      {"action": "finish"},
       {"action": "getValue", "expected": {"properties": {"name": {"eq": "hello"}, "port": {"eq": 8080}}}}
     ]
   },
   {
-    "name": "reset clears value",
+    "name": "empty session produces empty tree",
     "steps": [
-      {"action": "parse", "input": "name = hello"},
-      {"action": "reset"},
+      {"action": "finish"},
       {"action": "getValue", "expected": {}}
     ]
   },
   {
-    "name": "reset keeps schema",
+    "name": "schema validation with no schema returns empty errors",
     "steps": [
-      {"action": "parseSchema", "input": "REQUIRED { name = string }"},
       {"action": "parse", "input": "name = hello"},
-      {"action": "validateSchema", "expectedErrors": []},
-      {"action": "reset"},
-      {"action": "getValue", "expected": {}},
-      {"action": "parse", "input": "name = world"},
+      {"action": "finish"},
       {"action": "validateSchema", "expectedErrors": []}
     ]
   },
   {
-    "name": "parse after reset",
-    "steps": [
-      {"action": "parse", "input": "a = 1"},
-      {"action": "reset"},
-      {"action": "parse", "input": "b = 2"},
-      {"action": "getValue", "expected": {"properties": {"b": {"eq": 2}}}}
-    ]
-  },
-  {
-    "name": "schema validation missing required after reset",
+    "name": "schema validation passes",
     "steps": [
       {"action": "parseSchema", "input": "REQUIRED { name = string }"},
       {"action": "parse", "input": "name = hello"},
-      {"action": "validateSchema", "expectedErrors": []},
-      {"action": "reset"},
+      {"action": "finish"},
+      {"action": "validateSchema", "expectedErrors": []}
+    ]
+  },
+  {
+    "name": "schema validation missing required",
+    "steps": [
+      {"action": "parseSchema", "input": "REQUIRED { name = string }"},
+      {"action": "finish"},
       {"action": "validateSchema", "expectedErrors": [{"code": "missing-required"}]}
-    ]
-  },
-  {
-    "name": "no schema returns empty errors",
-    "steps": [
-      {"action": "parse", "input": "name = hello"},
-      {"action": "validateSchema", "expectedErrors": []}
     ]
   },
   {
@@ -67,17 +55,162 @@
     ]
   },
   {
-    "name": "reference validation",
+    "name": "reference validation passes",
     "steps": [
       {"action": "parse", "input": "outer { value = hello  inner { ref = $^value } }"},
-      {"action": "validateReferences", "expectedErrors": []}
+      {"action": "finish"}
     ]
   },
   {
-    "name": "reference validation errors",
+    "name": "reference validation errors in finish",
     "steps": [
       {"action": "parse", "input": "a { ref = $^missing }"},
-      {"action": "validateReferences", "expectedErrors": [{"code": "unresolved-reference"}]}
+      {"action": "finish", "expectedErrors": [{"code": "unresolved-reference"}]}
+    ]
+  },
+  {
+    "name": "forward clone",
+    "steps": [
+      {"action": "parse", "input": "copy := $thing\nthing { x = 1  y = 2 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"x": {"eq": 1}, "y": {"eq": 2}}}, "thing": {"properties": {"x": {"eq": 1}, "y": {"eq": 2}}}}}}
+    ]
+  },
+  {
+    "name": "forward clone with specialization",
+    "steps": [
+      {"action": "parse", "input": "copy := $thing { x = 99 }\nthing { x = 1  y = 2 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"x": {"eq": 99}}}, "thing": {"properties": {"x": {"eq": 1}, "y": {"eq": 2}}}}}}
+    ]
+  },
+  {
+    "name": "forward clone across parse calls",
+    "steps": [
+      {"action": "parse", "input": "copy := $thing"},
+      {"action": "parse", "input": "thing { x = 1 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"x": {"eq": 1}}}, "thing": {"properties": {"x": {"eq": 1}}}}}}
+    ]
+  },
+  {
+    "name": "forward clone unresolved target",
+    "steps": [
+      {"action": "parse", "input": "copy := $nonexistent"},
+      {"action": "finish", "expectedErrors": [{"code": "unresolved-clone-reference"}]}
+    ]
+  },
+  {
+    "name": "write through link error",
+    "steps": [
+      {"action": "parse", "input": "x = $target\nx.y = 1\ntarget { y = 0 }"},
+      {"action": "finish", "expectedErrors": [{"code": "write-through-link"}]}
+    ]
+  },
+  {
+    "name": "merge into link error",
+    "steps": [
+      {"action": "parse", "input": "x = $target\nx { y = 1 }\ntarget { y = 0 }"},
+      {"action": "finish", "expectedErrors": [{"code": "write-through-link"}]}
+    ]
+  },
+  {
+    "name": "stacked config with forward link",
+    "steps": [
+      {"action": "parse", "input": "connections { db { user = $session.user_id } }"},
+      {"action": "parse", "input": "session { user_id = pat }"},
+      {"action": "finish"}
+    ]
+  },
+  {
+    "name": "forward link resolves to target value",
+    "steps": [
+      {"action": "parse", "input": "ref = $target\ntarget = hello"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"ref": {"linkTo": ["target"], "linkUps": 0}, "target": {"eq": "hello"}}}}
+    ]
+  },
+  {
+    "name": "forward link with deep path",
+    "steps": [
+      {"action": "parse", "input": "ref = $a.b.c\na { b { c = deep } }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"ref": {"linkTo": ["a", "b", "c"], "linkUps": 0}, "a": {"properties": {"b": {"properties": {"c": {"eq": "deep"}}}}}}}}
+    ]
+  },
+  {
+    "name": "writes after forward clone",
+    "steps": [
+      {"action": "parse", "input": "x := $y\nx.z = 99\ny { z = 0 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"x": {"properties": {"z": {"eq": 99}}}, "y": {"properties": {"z": {"eq": 0}}}}}}
+    ]
+  },
+  {
+    "name": "circular clone reference",
+    "steps": [
+      {"action": "parse", "input": "a := $b\nb := $a"},
+      {"action": "finish", "expectedErrors": [{"code": "circular-reference"}]}
+    ]
+  },
+  {
+    "name": "three-way circular clone reference",
+    "steps": [
+      {"action": "parse", "input": "a := $c\nc := $b\nb := $a"},
+      {"action": "finish", "expectedErrors": [{"code": "circular-reference"}]}
+    ]
+  },
+  {
+    "name": "multiple forward refs in one file",
+    "steps": [
+      {"action": "parse", "input": "r1 := $t1\nr2 := $t2\nt1 { x = 1 }\nt2 { y = 2 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"r1": {"properties": {"x": {"eq": 1}}}, "r2": {"properties": {"y": {"eq": 2}}}, "t1": {"properties": {"x": {"eq": 1}}}, "t2": {"properties": {"y": {"eq": 2}}}}}}
+    ]
+  },
+  {
+    "name": "no forward refs single chunk",
+    "steps": [
+      {"action": "parse", "input": "a = 1\nb = 2\nc := $a"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"a": {"eq": 1}, "b": {"eq": 2}, "c": {"eq": 1}}}}
+    ]
+  },
+  {
+    "name": "forward reference target destroyed by ancestor deletion",
+    "steps": [
+      {"action": "parse", "input": "x = $a.b.c\na { b { c = 1 } }\n-a"},
+      {"action": "finish", "expectedErrors": [{"code": "unresolved-reference"}]}
+    ]
+  },
+  {
+    "name": "forward reference chaining link to clone to value",
+    "steps": [
+      {"action": "parse", "input": "link = $clone\nclone := $target\ntarget = 42"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {
+        "properties": {
+          "link": {"linkTo": ["clone"], "linkUps": 0},
+          "clone": {"eq": 42},
+          "target": {"eq": 42}
+        }
+      }}
+    ]
+  },
+  {
+    "name": "forward clone with dotted property name",
+    "steps": [
+      {"action": "parse", "input": "copy := $target\ntarget { `a.b` = 1 }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"a.b": {"eq": 1}}}, "target": {"properties": {"a.b": {"eq": 1}}}}}}
+    ]
+  },
+  {
+    "name": "forward clone with relative ref inside",
+    "steps": [
+      {"action": "parse", "input": "copy := $base\nbase { shared = internal\n primary { host = $^shared } }"},
+      {"action": "finish"},
+      {"action": "getValue", "expected": {"properties": {"copy": {"properties": {"shared": {"eq": "internal"}, "primary": {"properties": {"host": {"linkTo": ["shared"], "linkUps": 1}}}}}, "base": {"properties": {"shared": {"eq": "internal"}, "primary": {"properties": {"host": {"linkTo": ["shared"], "linkUps": 1}}}}}}}}
     ]
   }
 ]

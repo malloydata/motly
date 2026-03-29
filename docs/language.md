@@ -482,24 +482,33 @@ users = [
 primary_user = $users[0].name
 ```
 
-### References with `=` (Pointers)
+### References with `=` (Links)
 
-When used with `=`, a reference creates a **pointer** — a live link to another value:
+When used with `=`, a reference creates a **link** — a shared, read-only alias to another value:
 
 ```motly
-name = $ref              # this value becomes a pointer to ref
+name = $ref              # this value becomes a link to ref
 ```
+
+Links are read-only. Writing to a property through a link is a compile error:
+
+```motly
+x = $target
+x.timeout = 60           # error: write-through-link
+```
+
+If you need to copy a value and then modify it, use `:=` (clone) instead.
 
 ### Cloning with `:=` (Copy)
 
-When used with `:=`, a reference is **dereferenced and cloned** — the value and entire property subtree are copied into the target:
+When used with `:=`, a reference is **dereferenced and cloned** — the value and entire property subtree are copied into an independent, writable node:
 
 ```motly
 name := $ref             # clone ref's value AND properties into name
 name := $ref { color = red } # clone everything from ref, then merge overrides
 ```
 
-The difference between `= $ref` and `:= $ref` is the difference between "point at it" and "copy it."
+The difference between `= $ref` and `:= $ref` is the difference between "point at it" and "copy it." Links are shared and read-only; clones are independent and writable.
 
 This is especially useful for configuration modes, where a mode starts as a copy of a base config and then overrides specific values:
 
@@ -523,9 +532,9 @@ Loading `modes.staging` yields a complete connection map with both `cache` (clon
 
 ### Clone Boundary Rule
 
-When `:=` clones a subtree, all references within the cloned subtree must resolve within the subtree itself. If a relative reference would resolve to a value outside the cloned subtree, that is a compile error.
+When `:=` clones a subtree, all relative references within the cloned subtree must resolve within the subtree itself. If a relative reference would resolve to a value outside the cloned subtree, that is a compile error.
 
-A clone is always a self-contained snapshot. If you need to refer to something outside the subtree, use a concrete value rather than a relative reference that escapes the clone boundary.
+A clone is always a self-contained snapshot. If you need to refer to something outside the subtree, use a concrete path rather than a relative reference that escapes the clone boundary.
 
 ```motly
 # OK — internal reference resolves within the cloned subtree
@@ -542,6 +551,22 @@ other: {
 }
 copy := $other   # error: $^^root_setting resolves outside the cloned subtree
 ```
+
+### Forward References
+
+A reference can appear before its target is defined. References always resolve to the **final state** of their target after the entire file is interpreted:
+
+```motly
+link = $config           # forward reference — config defined below
+copy := $config          # forward clone also works
+
+config: {
+  host = localhost
+  port = 8080
+}
+```
+
+Both links and clones support forward references. In files with no forward references, there is no additional overhead — statements execute linearly in source order.
 
 ## Comments
 
@@ -612,8 +637,8 @@ Use the `x-` prefix for organization-specific schema codes (e.g., `x-acme-deploy
 | `$path` | Reference (absolute) | `timeout = $defaults.timeout` |
 | `$^path` | Reference (relative) | `host = $^^server.host` |
 | `$arr[0]` | Reference with index | `first = $items[0]` |
-| `= $ref` | Reference (pointer) | `link = $other.node` |
-| `:= $ref` | Clone (copy) | `copy := $base` |
+| `= $ref` | Link (shared, read-only) | `link = $other.node` |
+| `:= $ref` | Clone (independent copy) | `copy := $base` |
 | `# comment` | Line comment | `# This is a comment` |
 | `#! ...` | Schema directive | `#! schema=app url="..."` |
 

@@ -6,7 +6,10 @@ fn main() {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
 
-    let ctx = ExecContext { parse_id: 0, options: SessionOptions::default() };
+    let ctx = ExecContext {
+        parse_id: 0,
+        options: SessionOptions::default(),
+    };
     let result = parse_motly(&input, MOTLYDataNode::new(), &ctx);
     if result.errors.is_empty() {
         println!("{}", result.value.to_json_pretty());

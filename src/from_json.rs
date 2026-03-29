@@ -224,7 +224,7 @@ impl<'a> JsonParser<'a> {
 
     fn parse_literal(&mut self, expected: &[u8]) -> Result<(), String> {
         if self.pos + expected.len() > self.input.len() {
-            return Err(format!("Unexpected end of input"));
+            return Err("Unexpected end of input".to_string());
         }
         if &self.input[self.pos..self.pos + expected.len()] == expected {
             self.pos += expected.len();

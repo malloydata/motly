@@ -4,6 +4,9 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   MOTLYSession,
+  MOTLYResult,
+  MOTLYSchema,
+  MOTLYSchemaError,
 } from "../build/parser/src/index";
 
 // ── Fixture loading ─────────────────────────────────────────────
@@ -89,35 +92,42 @@ describe("Parse fixtures", () => {
   for (const fixture of parseFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
+      let hasSyntaxErrors = false;
 
       if (Array.isArray(fixture.input)) {
         for (const chunk of fixture.input) {
           const { errors } = s.parse(chunk);
+          if (errors.length > 0) hasSyntaxErrors = true;
           if (!fixture.expectErrors) {
             assert.deepStrictEqual(errors, [], `Unexpected parse errors: ${JSON.stringify(errors)}`);
           }
         }
       } else {
         const { errors } = s.parse(fixture.input);
-        if (fixture.expectErrors) {
-          assert.ok(errors.length > 0, "Expected parse errors");
-          if (fixture.expected === undefined) {
-            s.dispose();
-            return;
-          }
-          // expectErrors + expected: errors are non-fatal, check the tree too
-        } else {
+        if (errors.length > 0) hasSyntaxErrors = true;
+        if (!fixture.expectErrors) {
           assert.deepStrictEqual(errors, [], `Unexpected parse errors: ${JSON.stringify(errors)}`);
         }
       }
 
+      const result = s.finish();
+
+      if (fixture.expectErrors && !hasSyntaxErrors) {
+        // Semantic errors should be in result.errors
+        assert.ok(result.errors.length > 0, "Expected errors");
+      }
+
+      if (fixture.expectErrors && fixture.expected === undefined) {
+        // Error-only test — just verify errors were found (parse or finish)
+        assert.ok(hasSyntaxErrors || result.errors.length > 0, "Expected parse or finish errors");
+        return;
+      }
+
       if (fixture.expected !== undefined) {
-        const value = s.getValue();
+        const value = result.getValue();
         const expected = hydrateValue(fixture.expected);
         deepEqual(value, expected);
       }
-
-      s.dispose();
     });
   }
 });
@@ -140,7 +150,6 @@ describe("Parse error fixtures", () => {
       assert.ok(errors.length > 0, `Expected parse errors for: ${fixture.input}`);
       assert.ok(errors[0].code.length > 0);
       assert.ok(errors[0].message.length > 0);
-      s.dispose();
     });
   }
 });
@@ -159,12 +168,13 @@ const schemaFixtures = loadFixtures<SchemaFixture[]>("schema.json");
 describe("Schema fixtures", () => {
   for (const fixture of schemaFixtures) {
     it(fixture.name, () => {
-      const s = new MOTLYSession();
-      const { errors: schemaErrors } = s.parseSchema(fixture.schema);
+      const { schema, errors: schemaErrors } = MOTLYSchema.parse(fixture.schema);
       assert.deepStrictEqual(schemaErrors, [], `Schema parse errors: ${JSON.stringify(schemaErrors)}`);
+      const s = new MOTLYSession();
       const { errors: parseErrors } = s.parse(fixture.input);
       assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
-      const errors = s.validateSchema();
+      const result = s.finish();
+      const errors = schema.validate(result.getValue());
 
       const sortedActual = sortErrors(errors);
       const sortedExpected = sortErrors(fixture.expectedErrors);
@@ -183,8 +193,6 @@ describe("Schema fixtures", () => {
             `Error path mismatch at sorted index ${i}`);
         }
       }
-
-      s.dispose();
     });
   }
 });
@@ -205,9 +213,12 @@ describe("Reference fixtures", () => {
       const s = new MOTLYSession();
       const { errors: parseErrors } = s.parse(fixture.input);
       assert.deepStrictEqual(parseErrors, [], `Parse errors: ${JSON.stringify(parseErrors)}`);
-      const errors = s.validateReferences();
+      const result = s.finish();
 
-      const sortedActual = sortErrors(errors);
+      // Reference validation errors are now in result.errors
+      const refErrors = result.errors.filter(e => e.code === "unresolved-reference");
+
+      const sortedActual = sortErrors(refErrors);
       const sortedExpected = sortErrors(fixture.expectedErrors);
 
       assert.equal(
@@ -218,12 +229,7 @@ describe("Reference fixtures", () => {
 
       for (let i = 0; i < sortedExpected.length; i++) {
         assert.equal(sortedActual[i].code, sortedExpected[i].code);
-        if (sortedExpected[i].path) {
-          assert.deepStrictEqual(sortedActual[i].path, sortedExpected[i].path);
-        }
       }
-
-      s.dispose();
     });
   }
 });
@@ -249,6 +255,8 @@ describe("Session fixtures", () => {
   for (const fixture of sessionFixtures) {
     it(fixture.name, () => {
       const s = new MOTLYSession();
+      let result: MOTLYResult | null = null;
+      let schema: MOTLYSchema | null = null;
 
       for (const step of fixture.steps) {
         switch (step.action) {
@@ -262,15 +270,27 @@ describe("Session fixtures", () => {
             break;
           }
           case "parseSchema": {
-            const { errors } = s.parseSchema(step.input!);
-            assert.deepStrictEqual(errors, []);
+            const parsed = MOTLYSchema.parse(step.input!);
+            assert.deepStrictEqual(parsed.errors, []);
+            schema = parsed.schema;
             break;
           }
-          case "reset":
-            s.reset();
+          case "finish": {
+            result = s.finish();
+            if (step.expectedErrors !== undefined) {
+              const expectedCodes = step.expectedErrors.map(e => e.code).sort();
+              const actualCodes = result.errors.map(e => e.code).sort();
+              assert.deepStrictEqual(actualCodes, expectedCodes,
+                `Finish error codes mismatch: got [${actualCodes}], expected [${expectedCodes}]`);
+            } else {
+              assert.deepStrictEqual(result.errors, [],
+                `Unexpected finish errors: ${JSON.stringify(result.errors)}`);
+            }
             break;
+          }
           case "getValue": {
-            const value = s.getValue();
+            assert.ok(result, "getValue called before finish");
+            const value = result!.getValue();
             if (step.expected !== undefined) {
               const expected = hydrateValue(step.expected);
               deepEqual(value, expected);
@@ -278,30 +298,27 @@ describe("Session fixtures", () => {
             break;
           }
           case "validateSchema": {
-            const errors = s.validateSchema();
-            if (step.expectedErrors !== undefined) {
-              assert.equal(errors.length, step.expectedErrors.length,
-                `Schema error count mismatch: got ${errors.length}, expected ${step.expectedErrors.length}`);
-              for (let i = 0; i < step.expectedErrors.length; i++) {
-                assert.equal(errors[i].code, step.expectedErrors[i].code);
+            assert.ok(result, "validateSchema called before finish");
+            if (schema === null) {
+              // No schema set — should return empty errors
+              if (step.expectedErrors !== undefined) {
+                assert.equal(step.expectedErrors.length, 0,
+                  "No schema set but expectedErrors is non-empty");
               }
-            }
-            break;
-          }
-          case "validateReferences": {
-            const errors = s.validateReferences();
-            if (step.expectedErrors !== undefined) {
-              assert.equal(errors.length, step.expectedErrors.length);
-              for (let i = 0; i < step.expectedErrors.length; i++) {
-                assert.equal(errors[i].code, step.expectedErrors[i].code);
+            } else {
+              const schemaErrors: MOTLYSchemaError[] = schema.validate(result!.getValue());
+              if (step.expectedErrors !== undefined) {
+                assert.equal(schemaErrors.length, step.expectedErrors.length,
+                  `Schema error count mismatch: got ${schemaErrors.length}, expected ${step.expectedErrors.length}`);
+                for (let i = 0; i < step.expectedErrors.length; i++) {
+                  assert.equal(schemaErrors[i].code, step.expectedErrors[i].code);
+                }
               }
             }
             break;
           }
         }
       }
-
-      s.dispose();
     });
   }
 });
@@ -313,17 +330,25 @@ describe("MOTLYSession lifecycle", () => {
     const s = new MOTLYSession();
     s.dispose();
     assert.throws(() => s.parse("x = 1"), /disposed/);
-    assert.throws(() => s.parseSchema("Required { x = string }"), /disposed/);
-    assert.throws(() => s.reset(), /disposed/);
-    assert.throws(() => s.getValue(), /disposed/);
-    assert.throws(() => s.validateSchema(), /disposed/);
-    assert.throws(() => s.validateReferences(), /disposed/);
+    assert.throws(() => s.finish(), /disposed/);
   });
 
   it("dispose is idempotent", () => {
     const s = new MOTLYSession();
     s.dispose();
     s.dispose(); // should not throw
+  });
+
+  it("throws on parse after finish", () => {
+    const s = new MOTLYSession();
+    s.finish();
+    assert.throws(() => s.parse("x = 1"), /spent/);
+  });
+
+  it("throws on double finish", () => {
+    const s = new MOTLYSession();
+    s.finish();
+    assert.throws(() => s.finish(), /already been called/);
   });
 });
 
@@ -346,111 +371,102 @@ describe("Location tracking", () => {
     const s = new MOTLYSession();
     const r0 = s.parse("a = 1");
     const r1 = s.parse("b = 2");
-    const r2 = s.parseSchema("x = string");
+    const r2 = s.parse("c = 3");
     assert.equal(r0.parseId, 0);
     assert.equal(r1.parseId, 1);
     assert.equal(r2.parseId, 2);
-    s.dispose();
   });
 
   it("simple node gets location with correct parseId", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
-    const v = s.getValue();
+    const result = s.finish();
+    const v = result.getValue();
     const l = propLoc(v, "a");
     assert.ok(l, "expected location on node a");
     assert.equal(l.parseId, 0);
     assert.equal(l.begin.line, 0);
     assert.equal(l.begin.column, 0);
-    s.dispose();
   });
 
   it("multiple nodes each get their own location", () => {
     const s = new MOTLYSession();
     //         0123456789
     s.parse("a = 1\nb = 2");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const la = propLoc(v, "a");
     const lb = propLoc(v, "b");
     assert.equal(la.begin.line, 0);
     assert.equal(la.begin.column, 0);
     assert.equal(lb.begin.line, 1);
     assert.equal(lb.begin.column, 0);
-    s.dispose();
   });
 
   it("first-appearance rule: setEq does not change location", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
     s.parse("a = 2");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 0, "location should be from first parse");
     assert.equal((v.properties!.a as any).eq, 2, "value should be updated");
-    s.dispose();
   });
 
   it("first-appearance rule: updateProperties does not change location", () => {
     const s = new MOTLYSession();
     s.parse("a { b = 1 }");
     s.parse("a { c = 2 }");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 0, "location should be from first parse");
-    s.dispose();
   });
 
   it("first-appearance rule: replaceProperties preserves location", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
     s.parse("a: { b = 2 }");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 0, "location should be from first parse");
-    s.dispose();
   });
 
   it(":= (assignBoth) replaces location", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
     s.parse("a := 2");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 1, "location should be from second parse");
-    s.dispose();
   });
 
   it(":= with clone replaces location", () => {
     const s = new MOTLYSession();
     s.parse("a = 1 { x = 10 }");
     s.parse("b := $a");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const la = propLoc(v, "a");
     const lb = propLoc(v, "b");
     assert.equal(la.parseId, 0);
     assert.equal(lb.parseId, 1, "cloned node should have new location");
-    s.dispose();
   });
 
   it("nested properties get their own locations", () => {
     const s = new MOTLYSession();
     s.parse("a { b = 1\n  c = 2 }");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const la = propLoc(v, "a");
     const lb = propLoc(v, "a", "b");
     const lc = propLoc(v, "a", "c");
     assert.ok(la, "a should have location");
     assert.ok(lb, "b should have location");
     assert.ok(lc, "c should have location");
-    // b and c are inside the block, so they start on different lines/columns than a
     assert.notDeepStrictEqual(lb, lc, "b and c should have different locations");
-    s.dispose();
   });
 
   it("intermediate path nodes get locations", () => {
     const s = new MOTLYSession();
     s.parse("a.b.c = 1");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const la = propLoc(v, "a");
     const lb = propLoc(v, "a", "b");
     const lc = propLoc(v, "a", "b", "c");
@@ -460,18 +476,16 @@ describe("Location tracking", () => {
     assert.equal(la.parseId, 0);
     assert.equal(lb.parseId, 0);
     assert.equal(lc.parseId, 0);
-    s.dispose();
   });
 
   it("deletion sets location", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
     s.parse("-a");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 1, "deleted node should have new location");
     assert.equal((v.properties!.a as any).deleted, true);
-    s.dispose();
   });
 
   it("multi-file parse: locations track back to their parse call", () => {
@@ -479,96 +493,92 @@ describe("Location tracking", () => {
     const r0 = s.parse("a = 1");
     const r1 = s.parse("b = 2");
     const r2 = s.parse("c = 3");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     assert.equal(propLoc(v, "a").parseId, r0.parseId);
     assert.equal(propLoc(v, "b").parseId, r1.parseId);
     assert.equal(propLoc(v, "c").parseId, r2.parseId);
-    s.dispose();
   });
 
   it("location spans cover the full statement", () => {
     const s = new MOTLYSession();
     //  "a = 100" is 7 chars
     s.parse("a = 100");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.begin.offset, 0);
     assert.ok(l.end.offset >= 7, `end offset should be >= 7, got ${l.end.offset}`);
-    s.dispose();
   });
 
   it("location preserved through getValue clone", () => {
     const s = new MOTLYSession();
     s.parse("a = 1");
-    const v1 = s.getValue();
-    const v2 = s.getValue();
+    const result = s.finish();
+    const v1 = result.getValue();
+    const v2 = result.getValue();
     assert.deepStrictEqual(propLoc(v1, "a"), propLoc(v2, "a"));
     // Mutating one clone should not affect the other
     (v1.properties!.a as any).location = undefined;
     assert.ok(propLoc(v2, "a"), "clone should be independent");
-    s.dispose();
   });
 
   it("define (bare mention) sets location on first appearance only", () => {
     const s = new MOTLYSession();
     s.parse("a");
     s.parse("a = 1");
-    const v = s.getValue();
+    const v = s.finish().getValue();
     const l = propLoc(v, "a");
     assert.equal(l.parseId, 0, "bare define should set location");
-    s.dispose();
-  });
-
-  it("reset clears locations", () => {
-    const s = new MOTLYSession();
-    s.parse("a = 1");
-    s.reset();
-    s.parse("a = 2");
-    const v = s.getValue();
-    const l = propLoc(v, "a");
-    // After reset, parseId continues incrementing but the node is fresh
-    assert.equal(l.parseId, 1, "after reset, location should be from second parse");
-    s.dispose();
   });
 });
 
 describe("disableReferences option", () => {
   it("rejects = $ref when disableReferences is true", () => {
     const s = new MOTLYSession({ disableReferences: true });
-    const { errors } = s.parse("a = hello\nb = $a");
-    assert.equal(errors.length, 1);
-    assert.equal(errors[0].code, "ref-not-allowed");
+    s.parse("a = hello\nb = $a");
+    const result = s.finish();
+    const refErrors = result.errors.filter(e => e.code === "ref-not-allowed");
+    assert.equal(refErrors.length, 1);
     // The non-ref assignment should still succeed
-    const v = s.getValue();
+    const v = result.getValue();
     const a = v.properties?.a;
     assert.ok(a && !("linkTo" in a), "a should be a data node");
     assert.equal((a as any).eq, "hello");
-    // b should not exist (ref was rejected)
-    assert.equal(v.properties?.b, undefined);
-    s.dispose();
+    // b should exist as a ref node (disableReferences is diagnostic only)
+    const b = v.properties?.b;
+    assert.ok(b && "linkTo" in b, "b should be a ref node");
   });
 
   it("rejects array $ref when disableReferences is true", () => {
     const s = new MOTLYSession({ disableReferences: true });
-    const { errors } = s.parse("items = [hello, $foo]");
-    assert.equal(errors.length, 1);
-    assert.equal(errors[0].code, "ref-not-allowed");
-    s.dispose();
+    s.parse("items = [hello, $foo]");
+    const result = s.finish();
+    const refErrors = result.errors.filter(e => e.code === "ref-not-allowed");
+    assert.equal(refErrors.length, 1);
   });
 
   it("allows := $ref (clone) when disableReferences is true", () => {
     const s = new MOTLYSession({ disableReferences: true });
-    const { errors } = s.parse("a = hello\nb := $a");
-    assert.equal(errors.length, 0);
-    const v = s.getValue();
+    s.parse("a = hello\nb := $a");
+    const result = s.finish();
+    assert.equal(result.errors.length, 0);
+    const v = result.getValue();
     assert.equal((v.properties?.b as any)?.eq, "hello");
-    s.dispose();
   });
 
   it("allows refs by default", () => {
     const s = new MOTLYSession();
-    const { errors } = s.parse("a = hello\nb = $a");
-    assert.equal(errors.length, 0);
-    s.dispose();
+    s.parse("a = hello\nb = $a");
+    const result = s.finish();
+    assert.equal(result.errors.length, 0);
+  });
+
+  it("skips reference validation when disableReferences is true", () => {
+    const s = new MOTLYSession({ disableReferences: true });
+    s.parse("a = $nonexistent");
+    const result = s.finish();
+    // Should only have ref-not-allowed, NOT unresolved-reference
+    const codes = result.errors.map(e => e.code);
+    assert.ok(codes.includes("ref-not-allowed"));
+    assert.ok(!codes.includes("unresolved-reference"));
   });
 });

@@ -18,4 +18,4 @@ export { isRef, isDataNode, isEnvRef, formatRef } from "../../interface/src/type
 
 export { Mot, MotValue } from "./mot";
 export type { MotPath, MotResolvedValue, MotRefData, MotFactory, GetMotOptions } from "./mot";
-export { MOTLYSession } from "./session";
+export { MOTLYSession, MOTLYResult, MOTLYSchema } from "./session";
