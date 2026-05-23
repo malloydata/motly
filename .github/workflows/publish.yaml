@@ -18,15 +18,17 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: npm install -g npm@latest
       - name: Build and publish
         run: |
           cd bindings/typescript/interface && npm ci --loglevel error && npm run build && cd -
           cd bindings/typescript/parser && npm ci --loglevel error && npm run build && npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
