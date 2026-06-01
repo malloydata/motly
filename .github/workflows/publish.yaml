@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22.x
+          node-version: 24.x
       - name: Build and test
         run: |
           cd bindings/typescript/interface && npm ci --loglevel error && npm run build && cd -
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22.x
+          node-version: 24.x
           registry-url: https://registry.npmjs.org
       - name: Upgrade npm for trusted publishing (OIDC)
         run: npm install -g npm@latest
