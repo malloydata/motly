@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+libmotly_rust.dylib
+libmotly_rust.so
+motly_rust.dll
+libmotly_rust.dll

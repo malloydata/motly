@@ -1,5 +1,5 @@
 use crate::tree::*;
-use crate::validate::{validate_references, validate_schema};
+use crate::validate::validate_schema;
 
 /// Strip all location fields from a MOTLYDataNode tree (for fixture comparison).
 fn strip_locations(node: &mut MOTLYDataNode) {
@@ -111,7 +111,6 @@ fn test_fixture_parse_errors() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_fixture_schema() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(SCHEMA_FIXTURES).unwrap();
 
@@ -356,7 +355,57 @@ fn test_fixture_session() {
                     }
                 }
                 "validateSchema" => {
-                    // Schema validation not yet implemented in Rust — skip these steps
+                    let expected_errors = step["expectedErrors"].as_array().unwrap();
+                    if _schema.is_none() {
+                        assert!(expected_errors.is_empty(), "Fixture '{}' (validateSchema): No schema set but expectedErrors is non-empty", name);
+                        continue;
+                    }
+                    let errors = validate_schema(value.as_ref().unwrap(), _schema.as_ref().unwrap());
+                    assert_eq!(
+                        errors.len(),
+                        expected_errors.len(),
+                        "Fixture '{}' (validateSchema): error count mismatch — got {:?}, expected {}",
+                        name,
+                        errors,
+                        expected_errors.len()
+                    );
+                    let mut actual: Vec<_> = errors
+                        .iter()
+                        .map(|e| (e.code.to_string(), e.path.clone()))
+                        .collect();
+                    actual.sort();
+                    let mut expected: Vec<_> = expected_errors
+                        .iter()
+                        .map(|e| {
+                            let code = e["code"].as_str().unwrap().to_string();
+                            let path: Vec<String> = e
+                                .get("path")
+                                .and_then(|p| p.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .map(|v| v.as_str().unwrap().to_string())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            (code, path)
+                        })
+                        .collect();
+                    expected.sort();
+
+                    for (actual_entry, expected_entry) in actual.iter().zip(expected.iter()) {
+                        assert_eq!(
+                            actual_entry.0, expected_entry.0,
+                            "Fixture '{}' (validateSchema): error code mismatch: got '{}', expected '{}'",
+                            name, actual_entry.0, expected_entry.0
+                        );
+                        if !expected_entry.1.is_empty() {
+                            assert_eq!(
+                                actual_entry.1, expected_entry.1,
+                                "Fixture '{}' (validateSchema): error path mismatch: got {:?}, expected {:?}",
+                                name, actual_entry.1, expected_entry.1
+                            );
+                        }
+                    }
                 }
                 other => panic!("Fixture '{}': unknown action '{}'", name, other),
             }
@@ -526,7 +575,6 @@ fn test_k8s_sample_parses() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_k8s_sample_validates_against_schema() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let sample_src = include_str!("../test-data/k8s-deployment-sample.motly");
@@ -548,7 +596,6 @@ fn test_k8s_sample_validates_against_schema() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_k8s_missing_required_fields() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
@@ -567,7 +614,6 @@ fn test_k8s_missing_required_fields() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_k8s_wrong_kind_enum() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
@@ -588,7 +634,6 @@ fn test_k8s_wrong_kind_enum() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_k8s_bad_image_pattern() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
@@ -607,7 +652,6 @@ fn test_k8s_bad_image_pattern() {
 }
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_k8s_bad_container_port_type() {
     let schema_src = include_str!("../test-data/k8s-deployment-schema.motly");
     let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
@@ -807,9 +851,8 @@ fn test_loc_session_parse_ids() {
 // ── Meta-schema self-validation ─────────────────────────────────────
 
 #[test]
-#[ignore = "schema validation not yet implemented in Rust"]
 fn test_meta_schema_validates_itself() {
-    let schema_src = include_str!("../test-data/motly-schema.motly");
+    let schema_src = include_str!("../docs/motly_schema.motly");
     let schema = crate::parse_motly_0(schema_src, MOTLYDataNode::new());
     assert!(
         schema.errors.is_empty(),

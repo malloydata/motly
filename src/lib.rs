@@ -68,16 +68,20 @@ pub extern "C" fn alloc(len: usize) -> *mut u8 {
 /// and `len` must match the original allocation size.
 #[no_mangle]
 pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: usize) {
-    let layout = std::alloc::Layout::from_size_align(len, 1).unwrap();
-    unsafe { std::alloc::dealloc(ptr, layout) };
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    let slice = std::slice::from_raw_parts_mut(ptr, len);
+    let _ = Box::from_raw(slice);
 }
 
 // ── Session-based WASM FFI ──────────────────────────────────────────
 
 use crate::ast::Statement;
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 struct AccumulatedParse {
     stmts: Vec<Statement>,
@@ -93,22 +97,17 @@ struct Session {
     finished: bool,
 }
 
-// WASM is single-threaded, so thread_local is just a convenient safe wrapper.
-thread_local! {
-    static SESSIONS: RefCell<HashMap<u32, Session>> = RefCell::new(HashMap::new());
-    static NEXT_SESSION_ID: Cell<u32> = const { Cell::new(1) };
-}
+static SESSIONS: OnceLock<Mutex<HashMap<u32, Session>>> = OnceLock::new();
+static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);
 
 fn with_sessions<R>(f: impl FnOnce(&mut HashMap<u32, Session>) -> R) -> R {
-    SESSIONS.with(|s| f(&mut s.borrow_mut()))
+    let sessions = SESSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = sessions.lock().expect("Failed to lock SESSIONS mutex");
+    f(&mut *guard)
 }
 
 fn next_id() -> u32 {
-    NEXT_SESSION_ID.with(|c| {
-        let id = c.get();
-        c.set(id + 1);
-        id
-    })
+    NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Create a new session holding an empty MOTLYDataNode. Returns a session ID.
@@ -153,9 +152,17 @@ pub unsafe extern "C" fn wasm_session_parse(
     src_ptr: *const u8,
     src_len: usize,
 ) -> *const u8 {
-    let input = unsafe {
-        let slice = std::slice::from_raw_parts(src_ptr, src_len);
-        std::str::from_utf8_unchecked(slice)
+    let slice = unsafe { std::slice::from_raw_parts(src_ptr, src_len) };
+    let input = match std::str::from_utf8(slice) {
+        Ok(s) => s,
+        Err(_) => {
+            return string_to_c_ptr(json::parse_result_to_json(0, &[MOTLYError {
+                code: "utf8-error".to_string(),
+                message: "Invalid UTF-8 sequence".to_string(),
+                begin: error::Position { line: 0, column: 0, offset: 0 },
+                end: error::Position { line: 0, column: 0, offset: 0 },
+            }]));
+        }
     };
     let parse_id = with_sessions(|s| match s.get_mut(&id) {
         Some(session) if session.finished => None,
@@ -276,9 +283,17 @@ pub unsafe extern "C" fn wasm_session_parse_schema(
     src_ptr: *const u8,
     src_len: usize,
 ) -> *const u8 {
-    let input = unsafe {
-        let slice = std::slice::from_raw_parts(src_ptr, src_len);
-        std::str::from_utf8_unchecked(slice)
+    let slice = unsafe { std::slice::from_raw_parts(src_ptr, src_len) };
+    let input = match std::str::from_utf8(slice) {
+        Ok(s) => s,
+        Err(_) => {
+            return string_to_c_ptr(json::parse_result_to_json(0, &[MOTLYError {
+                code: "utf8-error".to_string(),
+                message: "Invalid UTF-8 sequence".to_string(),
+                begin: error::Position { line: 0, column: 0, offset: 0 },
+                end: error::Position { line: 0, column: 0, offset: 0 },
+            }]));
+        }
     };
     let ctx = with_sessions(|s| match s.get_mut(&id) {
         Some(session) => {
@@ -304,6 +319,9 @@ pub extern "C" fn wasm_session_reset(id: u32) {
     with_sessions(|s| {
         if let Some(session) = s.get_mut(&id) {
             session.value = MOTLYDataNode::new();
+            session.accumulated.clear();
+            session.finished = false;
+            session.next_parse_id = 0;
         }
     });
 }
@@ -316,6 +334,36 @@ pub extern "C" fn wasm_session_get_value(id: u32) -> *const u8 {
         Some(session) => string_to_c_ptr(json::to_wire(&session.value)),
         None => string_to_c_ptr("{}".to_string()),
     })
+}
+
+/// Set the session's value from a wire-format JSON string.
+/// Returns 1 on success, 0 on failure/parse error.
+///
+/// # Safety
+/// `json_ptr` must point to valid UTF-8 of length `json_len`.
+#[no_mangle]
+pub unsafe extern "C" fn wasm_session_set_value(
+    id: u32,
+    json_ptr: *const u8,
+    json_len: usize,
+) -> u32 {
+    let slice = unsafe { std::slice::from_raw_parts(json_ptr, json_len) };
+    let json_str = match std::str::from_utf8(slice) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    if let Ok(node) = from_json::from_wire(json_str) {
+        let mut found = false;
+        with_sessions(|s| {
+            if let Some(session) = s.get_mut(&id) {
+                session.value = node;
+                found = true;
+            }
+        });
+        if found { 1 } else { 0 }
+    } else {
+        0
+    }
 }
 
 /// Validate references in the session's value.

@@ -5,249 +5,249 @@
 #   Additional (allow/reject/validate-as), bare Additional, nested schemas,
 #   and custom types referencing other custom types.
 
-Types: {
+TYPES {
 
   # ── Labels & Annotations ───────────────────────────────────────────
   # Labels are arbitrary string→string maps
-  Labels: { Additional=string }
+  Labels { ADDITIONAL = string }
 
   # Annotations allow any value type
-  Annotations: { Additional=any }
+  Annotations { ADDITIONAL = any }
 
   # ── Metadata ───────────────────────────────────────────────────────
-  Metadata: {
-    Required: {
-      name=string { matches='^[a-z][a-z0-9._-]*$' }
+  Metadata {
+    REQUIRED {
+      name { VALUE = string { MATCHES = "^[a-z][a-z0-9._-]*$" } }
     }
-    Optional: {
-      namespace=string { matches='^[a-z][a-z0-9-]*$' }
-      labels=Labels
-      annotations=Annotations
-      createdAt=date
+    OPTIONAL {
+      namespace { VALUE = string { MATCHES = "^[a-z][a-z0-9-]*$" } }
+      labels = Labels
+      annotations = Annotations
+      createdAt = date
     }
   }
 
   # ── Networking ─────────────────────────────────────────────────────
-  ContainerPort: {
-    Required: {
-      containerPort=number
+  ContainerPort {
+    REQUIRED {
+      containerPort = number
     }
-    Optional: {
-      name=string
-      protocol=string { eq=[TCP, UDP, SCTP] }
+    OPTIONAL {
+      name = string
+      protocol { VALUE = string { ENUM = [TCP, UDP, SCTP] } }
     }
   }
 
-  ServicePort: {
-    Required: {
-      port=number
+  ServicePort {
+    REQUIRED {
+      port = number
     }
-    Optional: {
-      targetPort=number
-      name=string
-      protocol=string { eq=[TCP, UDP, SCTP] }
+    OPTIONAL {
+      targetPort = number
+      name = string
+      protocol { VALUE = string { ENUM = [TCP, UDP, SCTP] } }
     }
   }
 
   # ── Probes ─────────────────────────────────────────────────────────
-  HttpGet: {
-    Required: { path=string port=number }
-    Optional: { scheme=string { eq=[HTTP, HTTPS] } }
+  HttpGet {
+    REQUIRED { path = string  port = number }
+    OPTIONAL { scheme { VALUE = string { ENUM = [HTTP, HTTPS] } } }
   }
 
-  ExecAction: {
-    Required: { command="string[]" }
+  ExecAction {
+    REQUIRED { command = "string[]" }
   }
 
-  TcpSocket: {
-    Required: { port=number }
+  TcpSocket {
+    REQUIRED { port = number }
   }
 
-  ProbeAction.oneOf=[HttpGet, ExecAction, TcpSocket]
+  ProbeAction = [HttpGet, ExecAction, TcpSocket]
 
-  Probe: {
-    Required: { action=ProbeAction }
-    Optional: {
-      initialDelaySeconds=number
-      periodSeconds=number
-      timeoutSeconds=number
-      failureThreshold=number
-      successThreshold=number
+  Probe {
+    REQUIRED { action = ProbeAction }
+    OPTIONAL {
+      initialDelaySeconds = number
+      periodSeconds = number
+      timeoutSeconds = number
+      failureThreshold = number
+      successThreshold = number
     }
   }
 
   # ── Resources ──────────────────────────────────────────────────────
-  ResourceQuantities: {
-    Optional: {
-      cpu=string
-      memory=string
-      storage=string
+  ResourceQuantities {
+    OPTIONAL {
+      cpu = string
+      memory = string
+      storage = string
     }
-    Additional=string
+    ADDITIONAL = string
   }
 
-  ResourceRequirements: {
-    Optional: {
-      limits=ResourceQuantities
-      requests=ResourceQuantities
+  ResourceRequirements {
+    OPTIONAL {
+      limits = ResourceQuantities
+      requests = ResourceQuantities
     }
   }
 
   # ── Volumes ────────────────────────────────────────────────────────
-  EmptyDir: {
-    Optional: { medium=string { eq=[Memory, HugePages] } sizeLimit=string }
+  EmptyDir {
+    OPTIONAL { medium { VALUE = string { ENUM = [Memory, HugePages] } } sizeLimit = string }
   }
 
-  HostPath: {
-    Required: { path=string }
-    Optional: { type=string }
+  HostPath {
+    REQUIRED { path = string }
+    OPTIONAL { type = string }
   }
 
-  ConfigMapRef: {
-    Required: { name=string }
-    Optional: { optional=boolean }
+  ConfigMapRef {
+    REQUIRED { name = string }
+    OPTIONAL { optional = boolean }
   }
 
-  SecretRef: {
-    Required: { secretName=string }
-    Optional: { optional=boolean }
+  SecretRef {
+    REQUIRED { secretName = string }
+    OPTIONAL { optional = boolean }
   }
 
-  PvcRef: {
-    Required: { claimName=string }
-    Optional: { readOnly=boolean }
+  PvcRef {
+    REQUIRED { claimName = string }
+    OPTIONAL { readOnly = boolean }
   }
 
-  VolumeSource.oneOf=[EmptyDir, HostPath, ConfigMapRef, SecretRef, PvcRef]
+  VolumeSource = [EmptyDir, HostPath, ConfigMapRef, SecretRef, PvcRef]
 
-  Volume: {
-    Required: {
-      name=string
-      source=VolumeSource
+  Volume {
+    REQUIRED {
+      name = string
+      source = VolumeSource
     }
   }
 
-  VolumeMount: {
-    Required: {
-      name=string
-      mountPath=string
+  VolumeMount {
+    REQUIRED {
+      name = string
+      mountPath = string
     }
-    Optional: {
-      subPath=string
-      readOnly=boolean
+    OPTIONAL {
+      subPath = string
+      readOnly = boolean
     }
   }
 
   # ── Environment Variables ──────────────────────────────────────────
-  EnvVar: {
-    Required: { name=string }
-    Optional: { value=string }
+  EnvVar {
+    REQUIRED { name = string }
+    OPTIONAL { value = string }
   }
 
   # ── Security ───────────────────────────────────────────────────────
-  SecurityContext: {
-    Optional: {
-      runAsUser=number
-      runAsGroup=number
-      runAsNonRoot=boolean
-      readOnlyRootFilesystem=boolean
-      privileged=boolean
-      allowPrivilegeEscalation=boolean
+  SecurityContext {
+    OPTIONAL {
+      runAsUser = number
+      runAsGroup = number
+      runAsNonRoot = boolean
+      readOnlyRootFilesystem = boolean
+      privileged = boolean
+      allowPrivilegeEscalation = boolean
     }
   }
 
   # ── Container ──────────────────────────────────────────────────────
-  Container: {
-    Required: {
-      name=string
-      image=string { matches='.*:.*' }
+  Container {
+    REQUIRED {
+      name = string
+      image { VALUE = string { MATCHES = ".*:.*" } }
     }
-    Optional: {
-      command="string[]"
-      args="string[]"
-      ports="ContainerPort[]"
-      env="EnvVar[]"
-      resources=ResourceRequirements
-      volumeMounts="VolumeMount[]"
-      livenessProbe=Probe
-      readinessProbe=Probe
-      startupProbe=Probe
-      securityContext=SecurityContext
-      imagePullPolicy=string { eq=[Always, IfNotPresent, Never] }
-      workingDir=string
-      stdin=boolean
-      tty=boolean
+    OPTIONAL {
+      command = "string[]"
+      args = "string[]"
+      ports = "ContainerPort[]"
+      env = "EnvVar[]"
+      resources = ResourceRequirements
+      volumeMounts = "VolumeMount[]"
+      livenessProbe = Probe
+      readinessProbe = Probe
+      startupProbe = Probe
+      securityContext = SecurityContext
+      imagePullPolicy { VALUE = string { ENUM = [Always, IfNotPresent, Never] } }
+      workingDir = string
+      stdin = boolean
+      tty = boolean
     }
   }
 
   # ── Pod Spec ───────────────────────────────────────────────────────
-  PodSpec: {
-    Required: {
-      containers="Container[]"
+  PodSpec {
+    REQUIRED {
+      containers = "Container[]"
     }
-    Optional: {
-      initContainers="Container[]"
-      volumes="Volume[]"
-      restartPolicy=string { eq=[Always, OnFailure, Never] }
-      terminationGracePeriodSeconds=number
-      serviceAccountName=string
-      nodeName=string
-      nodeSelector=Labels
-      tolerations="any[]"
-      dnsPolicy=string { eq=[ClusterFirst, Default, None, ClusterFirstWithHostNet] }
-      hostNetwork=boolean
-      priorityClassName=string
+    OPTIONAL {
+      initContainers = "Container[]"
+      volumes = "Volume[]"
+      restartPolicy { VALUE = string { ENUM = [Always, OnFailure, Never] } }
+      terminationGracePeriodSeconds = number
+      serviceAccountName = string
+      nodeName = string
+      nodeSelector = Labels
+      tolerations = "any[]"
+      dnsPolicy { VALUE = string { ENUM = [ClusterFirst, Default, None, ClusterFirstWithHostNet] } }
+      hostNetwork = boolean
+      priorityClassName = string
     }
   }
 
   # ── Selector ───────────────────────────────────────────────────────
-  LabelSelector: {
-    Optional: {
-      matchLabels=Labels
+  LabelSelector {
+    OPTIONAL {
+      matchLabels = Labels
     }
-    Additional
+    ADDITIONAL = accept
   }
 
   # ── Deployment Strategy ────────────────────────────────────────────
-  RollingUpdate: {
-    Optional: {
-      maxSurge=string
-      maxUnavailable=string
+  RollingUpdate {
+    OPTIONAL {
+      maxSurge = string
+      maxUnavailable = string
     }
   }
 
-  DeploymentStrategy: {
-    Required: {
-      type=string { eq=[RollingUpdate, Recreate] }
+  DeploymentStrategy {
+    REQUIRED {
+      type { VALUE = string { ENUM = [RollingUpdate, Recreate] } }
     }
-    Optional: {
-      rollingUpdate=RollingUpdate
+    OPTIONAL {
+      rollingUpdate = RollingUpdate
     }
   }
 }
 
 # ── Root: Deployment ─────────────────────────────────────────────────
-Required: {
-  apiVersion=string
-  kind=string { eq=[Deployment, StatefulSet, DaemonSet] }
-  metadata=Metadata
+REQUIRED {
+  apiVersion = string
+  kind { VALUE = string { ENUM = [Deployment, StatefulSet, DaemonSet] } }
+  metadata = Metadata
   spec {
-    Required: {
-      selector=LabelSelector
+    REQUIRED {
+      selector = LabelSelector
       template {
-        Required: {
-          metadata=Metadata
-          spec=PodSpec
+        REQUIRED {
+          metadata = Metadata
+          spec = PodSpec
         }
       }
     }
-    Optional: {
-      replicas=number
-      strategy=DeploymentStrategy
-      minReadySeconds=number
-      revisionHistoryLimit=number
-      paused=boolean
-      progressDeadlineSeconds=number
+    OPTIONAL {
+      replicas = number
+      strategy = DeploymentStrategy
+      minReadySeconds = number
+      revisionHistoryLimit = number
+      paused = boolean
+      progressDeadlineSeconds = number
     }
   }
 }
