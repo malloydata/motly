@@ -5,7 +5,7 @@ import {
   RefPathSegment,
   Span,
 } from "./ast";
-import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, MOTLYSessionOptions, isRef, formatRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, MOTLYSessionOptions, isRef, isDataNode, isMotlyError, formatRef } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
 /** Per-parse execution context, combining the parse ID with session options. */
@@ -635,9 +635,9 @@ function applyClone(
   try {
     cloned = resolveAndClone(root, path, ups, refPath);
   } catch (err) {
-    if (err && typeof err === "object" && "code" in err) {
+    if (isMotlyError(err)) {
       const errorIndex = errors.length;
-      errors.push(err as MOTLYError);
+      errors.push(err);
       failedClones.push({
         sourcePath: serializePath(path),
         targetPath: resolveRefTargetKey(path, ups, refPath),
@@ -652,32 +652,6 @@ function applyClone(
   getOrCreateProperties(parent)[writeKey] = cloned;
 }
 
-// ─── Legacy statement executor (used for array element properties) ───
-
-function executeStatement(stmt: Statement, node: MOTLYDataNode, errors: MOTLYError[], ctx: ExecContext): void {
-  switch (stmt.kind) {
-    case "setEq":
-      executeSetEq(node, stmt.path, stmt.value, stmt.properties, errors, ctx, stmt.span);
-      break;
-    case "assignBoth":
-      executeAssignBoth(node, stmt.path, stmt.value, stmt.properties, errors, ctx, stmt.span);
-      break;
-    case "replaceProperties":
-      executeReplaceProperties(node, stmt.path, stmt.properties, errors, ctx, stmt.span);
-      break;
-    case "updateProperties":
-      executeUpdateProperties(node, stmt.path, stmt.properties, errors, ctx, stmt.span);
-      break;
-    case "define":
-      executeDefine(node, stmt.path, stmt.deleted, errors, ctx, stmt.span);
-      break;
-    case "clearAll":
-      delete node.eq;
-      node.properties = {};
-      break;
-  }
-}
-
 /** Build a MOTLYLocation from ctx and span. */
 function makeLocation(ctx: ExecContext, span: Span): MOTLYLocation {
   return { parseId: ctx.parseId, begin: span.begin, end: span.end };
@@ -687,250 +661,6 @@ function makeLocation(ctx: ExecContext, span: Span): MOTLYLocation {
 function setFirstLocation(node: MOTLYDataNode, ctx: ExecContext, span: Span): void {
   if (!node.location) {
     node.location = makeLocation(ctx, span);
-  }
-}
-
-/**
- * `name = value` — set eq, preserve existing properties.
- * `name = value { props }` — set eq, then merge properties.
- *
- * Special case: `name = $ref` inserts a MOTLYRef directly.
- * `name = $ref { props }` produces a non-fatal error (ref created, props ignored).
- */
-function executeSetEq(
-  node: MOTLYDataNode,
-  path: string[],
-  value: TagValue,
-  properties: Statement[] | null,
-  errors: MOTLYError[],
-  ctx: ExecContext,
-  span: Span
-): void {
-  // Special case: reference value → insert as MOTLYRef
-  if (value.kind === "scalar" && value.value.kind === "reference") {
-    if (ctx.options.disableReferences) {
-      errors.push({
-        code: "ref-not-allowed",
-        message: "References are not allowed in this session. Use := for cloning.",
-        begin: span.begin,
-        end: span.end,
-      });
-      // Still create the ref in the tree (disableReferences is a diagnostic, not enforcement)
-    }
-    if (properties !== null) {
-      const zero = { line: 0, column: 0, offset: 0 };
-      errors.push({
-        code: "ref-with-properties",
-        message: "Cannot add properties to a reference. Did you mean := (clone)?",
-        begin: zero,
-        end: zero,
-      });
-    }
-    const result = buildAccessPath(node, path, ctx, span, errors);
-    if (!result) return;
-    const [writeKey, parent] = result;
-    getOrCreateProperties(parent)[writeKey] = makeRef(value.value.ups, value.value.path);
-    return;
-  }
-
-  const result = buildAccessPath(node, path, ctx, span, errors);
-  if (!result) return;
-  const [writeKey, parent] = result;
-  const props = getOrCreateProperties(parent);
-
-  // Get or create target (preserves existing node and its properties)
-  let targetPv = props[writeKey];
-  if (targetPv === undefined) {
-    targetPv = {};
-    props[writeKey] = targetPv;
-  }
-
-  // If it was a ref, convert to empty node
-  const target = ensureDataNode(props, writeKey);
-
-  // Set location on first appearance
-  setFirstLocation(target, ctx, span);
-
-  // Set the value slot
-  setEqSlot(target, value, ctx, errors);
-
-  // If properties block present, MERGE them
-  if (properties !== null) {
-    for (const s of properties) {
-      executeStatement(s, target, errors, ctx);
-    }
-  }
-}
-
-/**
- * `name := value` — assign value + clear properties.
- * `name := value { props }` — assign value + replace properties.
- * `name := $ref` — clone the referenced subtree.
- * `name := $ref { props }` — clone + replace properties.
- */
-function executeAssignBoth(
-  node: MOTLYDataNode,
-  path: string[],
-  value: TagValue,
-  properties: Statement[] | null,
-  errors: MOTLYError[],
-  ctx: ExecContext,
-  span: Span
-): void {
-  if (
-    value.kind === "scalar" &&
-    value.value.kind === "reference"
-  ) {
-    // CLONE semantics: resolve + deep copy the target
-    let cloned: MOTLYDataNode;
-    try {
-      cloned = resolveAndClone(
-        node,
-        path,
-        value.value.ups,
-        value.value.path
-      );
-    } catch (err) {
-      if (err && typeof err === "object" && "code" in err) {
-        errors.push(err as MOTLYError);
-      }
-      return;
-    }
-    // Check for relative references that escape the clone boundary
-    sanitizeClonedRefs(cloned, 0, errors);
-    if (properties !== null) {
-      cloned.properties = {};
-      for (const s of properties) {
-        executeStatement(s, cloned, errors, ctx);
-      }
-    }
-    // := always sets a new location (it's a full replacement)
-    cloned.location = makeLocation(ctx, span);
-    const result = buildAccessPath(node, path, ctx, span, errors);
-    if (!result) return;
-    const [writeKey, parent] = result;
-    getOrCreateProperties(parent)[writeKey] = cloned;
-  } else {
-    // Literal value: create fresh node (replaces everything)
-    const fresh: MOTLYDataNode = {};
-    // := always sets a new location
-    fresh.location = makeLocation(ctx, span);
-    setEqSlot(fresh, value, ctx, errors);
-    if (properties !== null) {
-      for (const s of properties) {
-        executeStatement(s, fresh, errors, ctx);
-      }
-    }
-    const result = buildAccessPath(node, path, ctx, span, errors);
-    if (!result) return;
-    const [writeKey, parent] = result;
-    getOrCreateProperties(parent)[writeKey] = fresh;
-  }
-}
-
-/**
- * `name: { props }` — preserve existing value, replace properties.
- */
-function executeReplaceProperties(
-  node: MOTLYDataNode,
-  path: string[],
-  properties: Statement[],
-  errors: MOTLYError[],
-  ctx: ExecContext,
-  span: Span
-): void {
-  const pathResult = buildAccessPath(node, path, ctx, span, errors);
-  if (!pathResult) return;
-  const [writeKey, parent] = pathResult;
-
-  const fresh: MOTLYDataNode = {};
-
-  // Always preserve the existing value (if it's a node, not a ref)
-  const parentProps = getOrCreateProperties(parent);
-  const existing = parentProps[writeKey];
-  if (existing !== undefined && !isRef(existing)) {
-    fresh.eq = existing.eq;
-    // Preserve the existing location (first-appearance rule)
-    if (existing.location) {
-      fresh.location = existing.location;
-    }
-  }
-
-  // If no existing location, this is the first appearance
-  if (!fresh.location) {
-    fresh.location = makeLocation(ctx, span);
-  }
-
-  for (const stmt of properties) {
-    executeStatement(stmt, fresh, errors, ctx);
-  }
-
-  parentProps[writeKey] = fresh;
-}
-
-function executeUpdateProperties(
-  node: MOTLYDataNode,
-  path: string[],
-  properties: Statement[],
-  errors: MOTLYError[],
-  ctx: ExecContext,
-  span: Span
-): void {
-  const pathResult = buildAccessPath(node, path, ctx, span, errors);
-  if (!pathResult) return;
-  const [writeKey, parent] = pathResult;
-
-  const props = getOrCreateProperties(parent);
-
-  // Cannot merge into a link reference
-  if (props[writeKey] !== undefined && isRef(props[writeKey])) {
-    errors.push({
-      code: "write-through-link",
-      message: `Cannot write through link reference "${writeKey}"`,
-      begin: span.begin,
-      end: span.end,
-    });
-    return;
-  }
-
-  // Get or create the target node (merging semantics - preserves existing)
-  if (props[writeKey] === undefined) {
-    props[writeKey] = {};
-  }
-
-  const target = ensureDataNode(props, writeKey);
-
-  // Set location on first appearance
-  setFirstLocation(target, ctx, span);
-
-  for (const stmt of properties) {
-    executeStatement(stmt, target, errors, ctx);
-  }
-}
-
-function executeDefine(
-  node: MOTLYDataNode,
-  path: string[],
-  deleted: boolean,
-  errors: MOTLYError[],
-  ctx: ExecContext,
-  span: Span
-): void {
-  const pathResult = buildAccessPath(node, path, ctx, span, errors);
-  if (!pathResult) return;
-  const [writeKey, parent] = pathResult;
-  const props = getOrCreateProperties(parent);
-  if (deleted) {
-    const delNode: MOTLYDataNode = { deleted: true };
-    delNode.location = makeLocation(ctx, span);
-    props[writeKey] = delNode;
-  } else {
-    // Get-or-create: if node already exists, leave it alone
-    if (props[writeKey] === undefined) {
-      const newNode: MOTLYDataNode = {};
-      newNode.location = makeLocation(ctx, span);
-      props[writeKey] = newNode;
-    }
   }
 }
 
@@ -1042,9 +772,13 @@ function resolveArrayElement(el: ArrayElement, errors: MOTLYError[], ctx: ExecCo
   }
 
   if (el.properties !== null) {
-    for (const stmt of el.properties) {
-      executeStatement(stmt, node, errors, ctx);
-    }
+    // Run the element's property block through the same four-phase pipeline as
+    // the top level (against this element node as its root) rather than a
+    // parallel executor — one implementation of statement semantics.
+    const transformers = flatten(el.properties, ctx);
+    const { splits, deps } = chunk(transformers);
+    const { order } = topoSort(deps);
+    errors.push(...executeChunked(transformers, splits, order, node, ctx.options));
   }
 
   return node;
@@ -1185,12 +919,13 @@ function resolveRefFromRoot(
   for (const seg of ref.linkTo) {
     if (current === undefined) return null;
     if (isRef(current)) {
-      const resolved = resolveRefFromRoot(root, current as MOTLYRef, visited);
+      const resolved = resolveRefFromRoot(root, current, visited);
       if (!resolved) return null;
       current = resolved;
     }
 
-    const dataNode = current as MOTLYDataNode;
+    if (!isDataNode(current)) return null;
+    const dataNode: MOTLYDataNode = current;
     if (typeof seg === "string") {
       if (!dataNode.properties || !(seg in dataNode.properties)) return null;
       current = dataNode.properties[seg];
@@ -1203,10 +938,10 @@ function resolveRefFromRoot(
 
   // If final result is a ref, follow it
   if (current !== undefined && isRef(current)) {
-    return resolveRefFromRoot(root, current as MOTLYRef, visited);
+    return resolveRefFromRoot(root, current, visited);
   }
 
-  return (current as MOTLYDataNode) ?? null;
+  return current ?? null;
 }
 
 /**

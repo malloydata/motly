@@ -40,7 +40,6 @@ function walkRefs(
   root: MOTLYDataNode,
   errors: MOTLYValidationError[]
 ): void {
-  // Check array elements in eq
   if (node.eq !== undefined && Array.isArray(node.eq)) {
     walkArrayRefs(node.eq, path, ancestors, node, root, errors);
   }
@@ -51,7 +50,6 @@ function walkRefs(
       path.push(key);
 
       if (isRef(childPv)) {
-        // This property is a reference — check it
         const errMsg = checkLink(childPv, ancestors, root);
         if (errMsg !== null) {
           const err: MOTLYValidationError = {
@@ -63,7 +61,6 @@ function walkRefs(
           errors.push(err);
         }
       } else {
-        // Recurse into child node
         ancestors.push(node);
         walkRefs(childPv, path, ancestors, root, errors);
         ancestors.pop();
@@ -97,7 +94,6 @@ function walkArrayRefs(
         });
       }
     } else {
-      // Recurse into element node
       ancestors.push(parentNode);
       walkRefs(elemPv, path, ancestors, root, errors);
       ancestors.pop();
@@ -342,8 +338,10 @@ function validateValue(
 /** Describe a value for error messages. */
 function describeValue(eq: unknown): string {
   if (eq === undefined) return "no value";
-  if (eq instanceof Date) return "date";
+  if (eq instanceof Date) return `date ${eq.toISOString()}`;
   if (Array.isArray(eq)) return "array";
+  if (typeof eq === "string") return `string ${JSON.stringify(eq)}`;
+  if (typeof eq === "number" || typeof eq === "boolean") return `${typeof eq} ${eq}`;
   return typeof eq;
 }
 
@@ -424,7 +422,7 @@ function validateEnumRefinement(
     const allowed = enumNode.eq
       .filter((a): a is MOTLYDataNode => !isRef(a))
       .map((a) => String(a.eq));
-    pushSchemaError(errors, "invalid-enum-value", `Value does not match any allowed enum value. Allowed: [${allowed.join(", ")}]`, [...path], target);
+    pushSchemaError(errors, "invalid-enum-value", `${describeValue(value)} is not one of: [${allowed.join(", ")}]`, [...path], target);
   }
 }
 
@@ -527,7 +525,7 @@ function validateProperties(
         case "inline": {
           const pv = targetProps[key];
           if (isRef(pv)) {
-            pushSchemaError(errors, "wrong-type", "Expected a value but found a link", propPath);
+            pushSchemaError(errors, "wrong-type", `Expected a value but found a link ${formatRef(pv)}`, propPath);
           } else {
             validateConstraint(pv, additional.constraint, types, propPath, errors, depth + 1);
           }
@@ -560,7 +558,7 @@ function validatePropertyValue(
   depth: number
 ): void {
   if (isRef(targetPv)) {
-    pushSchemaError(errors, "wrong-type", "Expected a value but found a link", [...path]);
+    pushSchemaError(errors, "wrong-type", `Expected a value but found a link ${formatRef(targetPv)}`, [...path]);
     return;
   }
 
@@ -622,7 +620,7 @@ function validateArrayType(
     const elemPath = [...path, `[${i}]`];
     const elemPv = target.eq[i];
     if (isRef(elemPv)) {
-      pushSchemaError(errors, "wrong-type", `Expected ${innerType}, got reference`, elemPath);
+      pushSchemaError(errors, "wrong-type", `Expected ${innerType}, got link ${formatRef(elemPv)}`, elemPath);
     } else {
       validateAgainstTypeName(elemPv, innerType, types, elemPath, errors, depth);
     }

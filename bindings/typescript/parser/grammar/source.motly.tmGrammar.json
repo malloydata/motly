@@ -73,7 +73,7 @@
       ]
     },
     "value": {
-      "comment": "A single MOTLY value: literal | array | reference, optionally followed by a { } props block. Used by the value region and by array elements.",
+      "comment": "Reused from two positions — the value region (after = / :=) and array elements — so a bare word here is a string value, never a property name.",
       "patterns": [
         {
           "include": "#comments"

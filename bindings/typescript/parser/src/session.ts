@@ -5,6 +5,7 @@ import {
   MOTLYParseResult,
   MOTLYSessionOptions,
   MOTLYSchemaError,
+  isMotlyError,
 } from "../../interface/src/types";
 import { Statement } from "./ast";
 import { parse } from "./parser";
@@ -143,8 +144,8 @@ export class MOTLYResult {
    * Follows references lazily on read. Unresolved refs become Undefined Mot.
    */
   getMot<M extends Mot = Mot>(options?: GetMotOptions<M>): M {
-    const tree = this.getValue();
-    return buildMot(tree, options as GetMotOptions) as M;
+    // buildMot only reads the tree, so no defensive clone is needed.
+    return buildMot(this.value, options);
   }
 }
 
@@ -188,15 +189,4 @@ export class MOTLYSchema {
   validate(tree: MOTLYDataNode): MOTLYSchemaError[] {
     return validateSchema(tree, this.tree);
   }
-}
-
-function isMotlyError(e: unknown): e is MOTLYError {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    "code" in e &&
-    "message" in e &&
-    "begin" in e &&
-    "end" in e
-  );
 }

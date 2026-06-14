@@ -5,14 +5,9 @@ import {
   ArrayElement,
   RefPathSegment,
   Span,
+  Position,
 } from "./ast";
 import { MOTLYError } from "../../interface/src/types";
-
-interface Position {
-  line: number;
-  column: number;
-  offset: number;
-}
 
 class Parser {
   private input: string;
@@ -47,7 +42,10 @@ class Parser {
 
   private expectChar(ch: string): void {
     if (!this.eatChar(ch)) {
-      throw this.errorPoint(`Expected '${ch}'`);
+      const found = this.peekChar();
+      throw this.errorPoint(
+        `Expected '${ch}', found ${found === undefined ? "end of input" : `'${found}'`}`
+      );
     }
   }
 
@@ -166,7 +164,6 @@ class Parser {
       this.advance(1);
       this.skipWs();
 
-      // = { is now a parse error (= requires a value)
       if (this.peekChar() === "{") {
         throw this.errorPoint(
           "'=' requires a value; use ': { ... }' to replace properties"
@@ -391,6 +388,26 @@ class Parser {
 
   // ── Numbers ─────────────────────────────────────────────────────
 
+  /** Consume an optional `[eE][+-]?digits` exponent. Throws if `e`/`E` has no digits. */
+  private parseOptionalExponent(begin: Position): void {
+    const expCh = this.peekChar();
+    if (expCh !== "e" && expCh !== "E") return;
+    this.advance(1);
+    const signCh = this.peekChar();
+    if (signCh === "+" || signCh === "-") this.advance(1);
+    const expStart = this.pos;
+    while (
+      this.pos < this.input.length &&
+      this.input[this.pos] >= "0" &&
+      this.input[this.pos] <= "9"
+    ) {
+      this.advance(1);
+    }
+    if (this.pos === expStart) {
+      throw this.errorSpan("Expected exponent digits", begin);
+    }
+  }
+
   private parseNumberOrString(): TagValue {
     const start = this.pos;
     const begin = this.position();
@@ -440,24 +457,7 @@ class Parser {
       };
     }
 
-    // Exponent part
-    const expCh = this.peekChar();
-    if (expCh === "e" || expCh === "E") {
-      this.advance(1);
-      const signCh = this.peekChar();
-      if (signCh === "+" || signCh === "-") this.advance(1);
-      const expStart = this.pos;
-      while (
-        this.pos < this.input.length &&
-        this.input[this.pos] >= "0" &&
-        this.input[this.pos] <= "9"
-      ) {
-        this.advance(1);
-      }
-      if (this.pos === expStart) {
-        throw this.errorSpan("Expected exponent digits", begin);
-      }
-    }
+    this.parseOptionalExponent(begin);
 
     // Make sure the number isn't followed by bare-string characters
     const nextCh = this.peekChar();
@@ -526,24 +526,7 @@ class Parser {
       }
     }
 
-    // Check for exponent
-    const expCh = this.peekChar();
-    if (expCh === "e" || expCh === "E") {
-      this.advance(1);
-      const signCh = this.peekChar();
-      if (signCh === "+" || signCh === "-") this.advance(1);
-      const expStart = this.pos;
-      while (
-        this.pos < this.input.length &&
-        this.input[this.pos] >= "0" &&
-        this.input[this.pos] <= "9"
-      ) {
-        this.advance(1);
-      }
-      if (this.pos === expStart) {
-        throw this.errorSpan("Expected exponent digits", begin);
-      }
-    }
+    this.parseOptionalExponent(begin);
 
     const fullStr = this.input.substring(start, this.pos);
     const n = parseFloat(fullStr);

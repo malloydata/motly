@@ -1,5 +1,5 @@
 use crate::tree::*;
-use crate::validate::{validate_references, validate_schema};
+use crate::validate::validate_schema;
 
 /// Strip all location fields from a MOTLYDataNode tree (for fixture comparison).
 fn strip_locations(node: &mut MOTLYDataNode) {

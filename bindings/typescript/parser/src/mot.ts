@@ -46,14 +46,10 @@ export interface MotRefData {
  * The factory's {@link createMot} receives a resolved value and a mutable
  * properties Map. The Map is empty at creation time and populated afterward —
  * implementations must read from it lazily (not copy at construction time).
- *
- * **Note on array types**: When `M extends Mot`, array elements in
- * `MotResolvedValue` are typed as `Mot[]` but are `M` instances at runtime.
- * Factory implementations should cast if needed: `value.value as M[]`.
  */
 export interface MotFactory<M extends Mot = Mot> {
   /** Create a resolved Mot from a value and a lazily-populated properties Map. */
-  createMot(value: MotResolvedValue, properties: Map<string, M>): M;
+  createMot(value: MotResolvedValue<M>, properties: Map<string, M>): M;
   /** Create a reference Mot that delegates all reads to the resolved target. */
   createRefMot(ref: MotRefData, target: M): M;
   /** The singleton representing a missing/nonexistent node. */
@@ -346,6 +342,9 @@ class MotRef extends Mot {
   readonly isRef = true;
   private readonly _target: Mot;
 
+  // The default reference Mot is a transparent delegate: it forwards every read
+  // to the resolved target and does not retain the ref structure. A factory that
+  // needs to preserve linkUps/linkTo (e.g. for serialization) keeps `ref` itself.
   constructor(_ref: MotRefData, target: Mot) {
     super();
     this._target = target;
@@ -388,8 +387,8 @@ class MotUndefined extends Mot {
   protected _values() { return undefined; }
   protected _valueType() { return undefined; }
 
-  get keys(): Iterable<string> { return EMPTY_ITER as Iterable<string>; }
-  get entries(): Iterable<[string, Mot]> { return EMPTY_ITER as Iterable<[string, Mot]>; }
+  get keys(): Iterable<string> { return EMPTY_ITER; }
+  get entries(): Iterable<[string, Mot]> { return EMPTY_ITER; }
 
   get(..._path: MotPath): Mot { return this; }
 }
@@ -480,11 +479,14 @@ function navigateRef(
   return { target: current, ancestors: navAncestors };
 }
 
-export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
+export function buildMot<M extends Mot = Mot>(root: MOTLYDataNode, options?: GetMotOptions<M>): M {
   const env = options?.env;
-  const factory = (options?.factory ?? defaultFactory) as MotFactory;
+  // The default factory builds base Mots. A caller asking for a custom M must
+  // supply a matching factory — the type system can't tie "custom M" to "factory
+  // supplied", so this fallback is the one place the default is widened to M.
+  const factory: MotFactory<M> = options?.factory ?? (defaultFactory as MotFactory<M>);
   const undef = factory.undefinedMot;
-  const cache = new Map<MOTLYDataNode, Mot>();
+  const cache = new Map<MOTLYDataNode, M>();
 
   // ancestors does NOT include `node` — it's the chain above.
   // Matches the convention in validate.ts.
@@ -492,11 +494,11 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
     node: MOTLYDataNode,
     root: MOTLYDataNode,
     ancestors: MOTLYDataNode[],
-  ): Mot {
+  ): M {
     if (node.deleted) return undef;
     if (cache.has(node)) return cache.get(node)!;
 
-    const properties = new Map<string, Mot>();
+    const properties = new Map<string, M>();
     // For eq resolution, array elements are children of node, so push node
     const resolvedValue = resolveEq(node.eq, root, ancestors, node);
 
@@ -524,7 +526,7 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
     root: MOTLYDataNode,
     ancestors: MOTLYDataNode[],
     parentNode: MOTLYDataNode,
-  ): Mot {
+  ): M {
     if (isRef(pv)) {
       // Refs resolve relative to ancestors (not including parentNode)
       const visiting = new Set<MOTLYNode>();
@@ -546,7 +548,7 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
     root: MOTLYDataNode,
     ancestors: MOTLYDataNode[],
     parentNode: MOTLYDataNode,
-  ): MotResolvedValue {
+  ): MotResolvedValue<M> {
     if (eq === undefined) return undefined;
     if (isEnvRef(eq)) {
       const val = env ? env[eq.env] : undefined;
@@ -557,7 +559,7 @@ export function buildMot(root: MOTLYDataNode, options?: GetMotOptions): Mot {
       // Array elements are children of parentNode.
       // Push parentNode onto ancestors, matching validate.ts convention.
       const arrAncestors = [...ancestors, parentNode];
-      const elements: Mot[] = [];
+      const elements: M[] = [];
       for (const elem of eq) {
         elements.push(resolveMotlyNode(elem, root, arrAncestors, parentNode));
       }

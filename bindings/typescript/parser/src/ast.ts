@@ -1,7 +1,14 @@
+/** A point in the input: 0-based line, 0-based column, and absolute offset. */
+export interface Position {
+  line: number;
+  column: number;
+  offset: number;
+}
+
 /** A source span (begin..end) within a single parse() call. */
 export interface Span {
-  begin: { line: number; column: number; offset: number };
-  end: { line: number; column: number; offset: number };
+  begin: Position;
+  end: Position;
 }
 
 /** A scalar or reference value. */

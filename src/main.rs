@@ -4,7 +4,10 @@ use std::io::{self, Read};
 
 fn main() {
     let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
+    if let Err(e) = io::stdin().read_to_string(&mut input) {
+        eprintln!("Failed to read stdin: {e}");
+        std::process::exit(1);
+    }
 
     let ctx = ExecContext {
         parse_id: 0,

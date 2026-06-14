@@ -8,7 +8,7 @@ export interface MOTLYLocation {
   end: { line: number; column: number; offset: number };
 }
 
-/** The result of a parse() or parseSchema() call. */
+/** The result of a parse() call. */
 export interface MOTLYParseResult {
   /** The parse ID assigned to this call (for mapping locations back to sources). */
   parseId: number;
@@ -114,6 +114,14 @@ export function isDataNode(node: MOTLYNode | undefined): node is MOTLYDataNode {
 /** Type guard: is this eq value an env reference? */
 export function isEnvRef(eq: MOTLYDataNode["eq"]): eq is MOTLYEnvRef {
   return typeof eq === "object" && eq !== null && "env" in eq && !Array.isArray(eq) && !(eq instanceof Date);
+}
+
+/** Type guard: is this caught value a MOTLYError? */
+export function isMotlyError(e: unknown): e is MOTLYError {
+  return (
+    typeof e === "object" && e !== null &&
+    "code" in e && "message" in e && "begin" in e && "end" in e
+  );
 }
 
 /** Options for creating a MOTLYSession. */

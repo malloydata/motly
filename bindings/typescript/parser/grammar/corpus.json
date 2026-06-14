@@ -265,6 +265,16 @@
       ]
     },
     {
+      "name": "grandparent reference $^^",
+      "code": "r = $^^.foo",
+      "expect": [
+        {
+          "text": "^^",
+          "scope": "keyword.operator.reference.motly"
+        }
+      ]
+    },
+    {
       "name": "relative reference $^.foo",
       "code": "r = $^.foo",
       "expect": [
@@ -325,6 +335,10 @@
         {
           "text": "\"\"\"",
           "scope": "punctuation.definition.string.begin.motly"
+        },
+        {
+          "text": "a",
+          "scope": "string.quoted.triple.double.motly"
         }
       ]
     },
@@ -356,6 +370,10 @@
         {
           "text": "'''",
           "scope": "punctuation.definition.string.begin.motly"
+        },
+        {
+          "text": "a",
+          "scope": "string.quoted.triple.single.motly"
         }
       ]
     },
@@ -366,6 +384,10 @@
         {
           "text": "<<<",
           "scope": "punctuation.definition.string.begin.motly"
+        },
+        {
+          "text": "hello",
+          "scope": "string.unquoted.heredoc.motly"
         }
       ]
     },
@@ -380,6 +402,10 @@
         {
           "text": "1",
           "scope": "constant.numeric.motly"
+        },
+        {
+          "text": ",",
+          "scope": "punctuation.separator.motly"
         }
       ]
     },

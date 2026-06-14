@@ -14,7 +14,7 @@ export type {
   MOTLYValidationError,
 } from "../../interface/src/types";
 
-export { isRef, isDataNode, isEnvRef, formatRef } from "../../interface/src/types";
+export { isRef, isDataNode, isEnvRef, isMotlyError, formatRef } from "../../interface/src/types";
 
 export { Mot, MotValue } from "./mot";
 export type { MotPath, MotResolvedValue, MotRefData, MotFactory, GetMotOptions } from "./mot";

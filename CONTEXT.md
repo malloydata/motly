@@ -44,21 +44,27 @@ bindings/typescript/
       validate.ts      — TypeScript port of src/validate.rs (~810 lines)
       mot.ts           — Mot abstract class + MotValue, MotRef, buildMot
       clone.ts         — Deep clone helpers for MOTLYNode trees
+    grammar/           — source.motly TextMate grammar (shipped asset; see grammar/README.md)
     test/test.ts       — fixture-driven tests + hand-written tests
     test/mot.test.ts   — Tests for Mot API
+    test/grammar-*.test.ts — TextMate grammar scope + parser-conformance tests
 
 docs/
-  language.md                — Complete MOTLY language reference with EBNF grammar
+  language.md                — Complete MOTLY language reference (prose; EBNF lives in motly-grammar.md)
+  motly-grammar.md           — Formal EBNF grammar
   interpreter.md             — Four-phase interpreter architecture (both Rust and TS)
   schema_spec.md             — ALL-CAPS schema language specification (iteration 2)
   motly_schema.motly         — Self-validating meta-schema in the new format
+  motly-typescript.md        — TypeScript binding guide
+  mot-api-python.md          — Python Mot API guide
+  mot-api-rust.md            — Rust Mot API guide
 
 test-data/
   fixtures/        — Shared JSON test fixtures (both implementations run these)
-    parse.json         — 134 entries: parse input → expected value
+    parse.json         — 142 entries: parse input → expected value
     parse-errors.json  — 14 entries: parse input → expected errors
-    schema.json        — 118 entries: schema + input → expected validation errors
-    refs.json          — 15 entries: input → expected reference validation errors
+    schema.json        — 114 entries: schema + input → expected validation errors
+    refs.json          — 16 entries: input → expected reference validation errors
     session.json       — 28 entries: multi-step session operations (including forward reference, circular clone, write-through-link)
   k8s-deployment-schema.motly  — Example: Kubernetes deployment schema
   k8s-deployment-sample.motly  — Example: Kubernetes deployment config
@@ -66,7 +72,7 @@ test-data/
 
 ## The MOTLY Language
 
-Full reference: `docs/language.md`. EBNF grammar is at the end of that file.
+Full reference: `docs/language.md`. The formal EBNF grammar is in `docs/motly-grammar.md`.
 
 Every node has two independent slots: a **value** (scalar, array, env reference, or `@none`) and **properties** (a map of child nodes or link references). The three core operators each control a different combination:
 
@@ -160,7 +166,7 @@ Property metadata: `EXCLUSIVE` (mutual exclusion groups), `REQUIRES` (sibling de
 
 **IMPORTANT GOTCHA**: Array types MUST be quoted: `items = "string[]"`, `ports = "number[]"`. The brackets `[]` are not valid bare-string characters, so unquoted `string[]` causes a parse error.
 
-**Implementation status**: TypeScript validator is complete (118 test fixtures passing). Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
+**Implementation status**: TypeScript validator is complete (114 schema fixtures passing). Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
 
 Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `out-of-range`, `length-violation`, `exclusive-violation`, `requires-violation`, `ref-not-allowed`
 

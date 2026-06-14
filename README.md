@@ -51,7 +51,7 @@ MOTLY uses explicit braces like JSON (no whitespace surprises like YAML) but dro
 
 MOTLY is under active development. [Malloy](https://malloydata.dev) uses the MOTLY parser for its [tagged annotations](https://docs.malloydata.dev/documentation/language/tags).
 
-**What works today (0.1.0):**
+**What works today:**
 - Full parser and interpreter (Rust and pure TypeScript, kept in sync)
 - Reference system (`$root.path`, `$^.sibling`, `$^^.grandparent`, `$^` for parent, indexed access)
 - Clone/override patterns with `:=` for configuration modes and inheritance

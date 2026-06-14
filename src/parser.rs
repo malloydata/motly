@@ -1,5 +1,4 @@
 use crate::ast::*;
-#[allow(unused_imports)]
 use crate::error::{MOTLYError, Position};
 
 /// Parser state: tracks position in the input string.
@@ -64,7 +63,8 @@ impl<'a> Parser<'a> {
         let consumed = &self.input[..self.pos];
         let line = consumed.matches('\n').count();
         let last_newline = consumed.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let column = self.pos - last_newline;
+        // column is a character offset (per Position's contract), not a byte delta.
+        let column = self.input[last_newline..self.pos].chars().count();
         Position {
             line,
             column,
@@ -425,6 +425,28 @@ impl<'a> Parser<'a> {
 
     // ── Numbers ─────────────────────────────────────────────────────
 
+    /// Consume an optional `[eE][+-]?digits` exponent. Errs if `e`/`E` has no digits.
+    fn parse_optional_exponent(&mut self, begin: Position) -> Result<(), MOTLYError> {
+        if let Some('e' | 'E') = self.peek_char() {
+            self.advance(1);
+            if let Some('+' | '-') = self.peek_char() {
+                self.advance(1);
+            }
+            let exp_start = self.pos;
+            while let Some(ch) = self.peek_char() {
+                if ch.is_ascii_digit() {
+                    self.advance(1);
+                } else {
+                    break;
+                }
+            }
+            if self.pos == exp_start {
+                return Err(self.error_span("Expected exponent digits".to_string(), begin));
+            }
+        }
+        Ok(())
+    }
+
     fn parse_number_or_string(&mut self) -> Result<TagValue, MOTLYError> {
         let start = self.pos;
         let begin = self.position();
@@ -477,24 +499,7 @@ impl<'a> Parser<'a> {
                 .map(|s| TagValue::Scalar(ScalarValue::String(s)));
         }
 
-        // Exponent part
-        if let Some('e' | 'E') = self.peek_char() {
-            self.advance(1);
-            if let Some('+' | '-') = self.peek_char() {
-                self.advance(1);
-            }
-            let exp_start = self.pos;
-            while let Some(ch) = self.peek_char() {
-                if ch.is_ascii_digit() {
-                    self.advance(1);
-                } else {
-                    break;
-                }
-            }
-            if self.pos == exp_start {
-                return Err(self.error_span("Expected exponent digits".to_string(), begin));
-            }
-        }
+        self.parse_optional_exponent(begin)?;
 
         // Make sure the number isn't followed by bare-string characters
         if let Some(ch) = self.peek_char() {
@@ -558,24 +563,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Check for exponent
-        if let Some('e' | 'E') = self.peek_char() {
-            self.advance(1);
-            if let Some('+' | '-') = self.peek_char() {
-                self.advance(1);
-            }
-            let exp_start = self.pos;
-            while let Some(ch) = self.peek_char() {
-                if ch.is_ascii_digit() {
-                    self.advance(1);
-                } else {
-                    break;
-                }
-            }
-            if self.pos == exp_start {
-                return Err(self.error_span("Expected exponent digits".to_string(), begin));
-            }
-        }
+        self.parse_optional_exponent(begin)?;
 
         let full_str = &self.input[start..self.pos];
         let n: f64 = full_str
