@@ -1,0 +1,329 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MOTLY",
+  "scopeName": "source.motly",
+  "comment": "MOTLY (https://github.com/malloydata/motly). Built from the EBNF in docs/motly-grammar.md; the real parser (bindings/typescript/parser) is the conformance oracle. Scopes use conventional role-family names suffixed .motly so themes color them by prefix. Key-vs-value coloring: #statements only runs in statement position (document top + inside { }), so a bare word there is a property name; values live in the value region opened by = / := / the array / the trailing-props block, where a bare word is an unquoted string. The value region ends at the first whitespace not consumed by a sub-rule (strings, arrays, refs consume their own), which is what lets `a=1 b=2` on one line color b as a key, not a value. backtick is a quoted IDENTIFIER (key), never a string value (EBNF). No string interpolation in MOTLY.",
+  "patterns": [
+    {
+      "include": "#statements"
+    }
+  ],
+  "repository": {
+    "statements": {
+      "comment": "The document body and every { } block. Statement position: bare words here are property names.",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.motly"
+        },
+        {
+          "match": "-\\.\\.\\.",
+          "name": "keyword.operator.negation.motly"
+        },
+        {
+          "include": "#properties-block"
+        },
+        {
+          "comment": "= and := open a value region; begin eats the trailing ws so the region starts on the value and ends at the next bare whitespace.",
+          "begin": "((?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+)(?:\\.(?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+))*)\\s*(:=|=)\\s*",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.tag.motly"
+            },
+            "2": {
+              "name": "keyword.operator.assignment.motly"
+            }
+          },
+          "end": "(?=\\s)|(?=[,}\\]])|(?=$)",
+          "patterns": [
+            {
+              "include": "#value"
+            }
+          ]
+        },
+        {
+          "match": "((?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+)(?:\\.(?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+))*)\\s*(:)(?!=)",
+          "captures": {
+            "1": {
+              "name": "entity.name.tag.motly"
+            },
+            "2": {
+              "name": "keyword.operator.assignment.motly"
+            }
+          }
+        },
+        {
+          "match": "(-)\\s*((?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+)(?:\\.(?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+))*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.negation.motly"
+            },
+            "2": {
+              "name": "entity.name.tag.motly"
+            }
+          }
+        },
+        {
+          "match": "((?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+)(?:\\.(?:`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+))*)",
+          "name": "entity.name.tag.motly"
+        }
+      ]
+    },
+    "value": {
+      "comment": "A single MOTLY value: literal | array | reference, optionally followed by a { } props block. Used by the value region and by array elements.",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#reference"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#array"
+        },
+        {
+          "include": "#properties-block"
+        },
+        {
+          "match": "[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+",
+          "name": "string.unquoted.motly"
+        }
+      ]
+    },
+    "reference": {
+      "comment": "$path (absolute), $^ / $^^ (ancestor), $^.path (relative). $ is the sigil, ^ steps up, . separates, [n] indexes.",
+      "begin": "(\\$)(\\^*)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.reference.motly"
+        },
+        "2": {
+          "name": "keyword.operator.reference.motly"
+        }
+      },
+      "end": "(?=[\\s,}\\]{#]|$)",
+      "name": "variable.other.reference.motly",
+      "patterns": [
+        {
+          "match": "\\.",
+          "name": "punctuation.accessor.motly"
+        },
+        {
+          "match": "\\[[0-9]+\\]",
+          "name": "constant.numeric.index.motly"
+        },
+        {
+          "match": "`[^`\\n]*`",
+          "name": "variable.other.reference.motly"
+        },
+        {
+          "match": "[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+",
+          "name": "variable.other.reference.motly"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "comment": "ISO date/datetime: @YYYY-MM-DD with optional T time and timezone.",
+          "match": "@\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?",
+          "name": "constant.other.date.motly"
+        },
+        {
+          "comment": "@env.NAME reads from the environment at resolution time.",
+          "match": "(@env)(\\.)(`[^`\\n]*`|[A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff]+)",
+          "captures": {
+            "1": {
+              "name": "support.variable.motly"
+            },
+            "2": {
+              "name": "punctuation.accessor.motly"
+            },
+            "3": {
+              "name": "support.variable.motly"
+            }
+          }
+        },
+        {
+          "match": "@(?:true|false|none)(?![A-Za-z0-9_\u00c0-\u024f\u1e00-\u1eff])",
+          "name": "constant.language.motly"
+        }
+      ]
+    },
+    "number": {
+      "comment": "[-] digits [.digits] [exponent] | [-] .digits [exponent]. Trailing guard makes 3px fall through to a bareString, matching the parser.",
+      "match": "-?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?(?![A-Za-z0-9_.])",
+      "name": "constant.numeric.motly"
+    },
+    "strings": {
+      "comment": "Order: triple delimiters before their single-char prefix so the begin scanner does not drop the shorter form. Escape-capable: \" \"\"\". Raw (backslash literal): ' ''' <<<>>>.",
+      "patterns": [
+        {
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "name": "string.quoted.triple.double.motly",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.motly"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.motly"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#string-escapes"
+            }
+          ]
+        },
+        {
+          "begin": "\"",
+          "end": "\"|(?=$)",
+          "name": "string.quoted.double.motly",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.motly"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.motly"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#string-escapes"
+            }
+          ]
+        },
+        {
+          "begin": "'''",
+          "end": "'''",
+          "name": "string.quoted.triple.single.motly",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.motly"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.motly"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#raw-string-escape"
+            }
+          ]
+        },
+        {
+          "begin": "'",
+          "end": "'|(?=$)",
+          "name": "string.quoted.single.motly",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.motly"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.motly"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#raw-string-escape"
+            }
+          ]
+        },
+        {
+          "comment": "Heredoc <<< ... >>>. Raw, multi-line; closes on a line that is just >>> (modulo surrounding whitespace).",
+          "begin": "<<<",
+          "end": "^\\s*>>>\\s*$",
+          "name": "string.unquoted.heredoc.motly",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.motly"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.motly"
+            }
+          }
+        }
+      ]
+    },
+    "string-escapes": {
+      "comment": "parseEscapeChar: \\b \\f \\n \\r \\t \\uXXXX, and \\<any> -> that char.",
+      "match": "\\\\(?:u[0-9A-Fa-f]{4}|.)",
+      "name": "constant.character.escape.motly"
+    },
+    "raw-string-escape": {
+      "comment": "Raw strings keep the backslash literally, but a backslash still pairs with the next char (so \\' does not close a '...'). Consume the pair without painting it as an escape.",
+      "match": "\\\\."
+    },
+    "array": {
+      "begin": "\\[",
+      "end": "\\]",
+      "name": "meta.array.motly",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.array.begin.motly"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.array.end.motly"
+        }
+      },
+      "patterns": [
+        {
+          "match": ",",
+          "name": "punctuation.separator.motly"
+        },
+        {
+          "include": "#value"
+        }
+      ]
+    },
+    "properties-block": {
+      "begin": "\\{",
+      "end": "\\}",
+      "name": "meta.block.motly",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.block.begin.motly"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.block.end.motly"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#statements"
+        }
+      ]
+    },
+    "comments": {
+      "match": "#.*$",
+      "name": "comment.line.number-sign.motly"
+    }
+  }
+}

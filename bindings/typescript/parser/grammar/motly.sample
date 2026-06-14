@@ -1,0 +1,58 @@
+# A tour of MOTLY syntax, for eyeballing the grammar and for future tooling.
+
+# Bare and quoted property names, all the scalar value forms.
+name = my-service
+`display name` = "My Service"
+port = 8080
+ratio = -1.5e-3
+fraction = .25
+enabled = @true
+disabled = @false
+missing = @none
+home = @env.HOME
+released = @2024-01-31
+checked = @2024-01-31T09:30:00Z
+
+# Strings: escape-capable (" """) and raw (' ''' <<<>>>).
+greeting = "hello\tworld\n"
+emoji = "✨"
+windows_path = 'C:\Users\me'
+quote_in_raw = 'it\'s fine'
+block = """
+  line one
+  line two
+"""
+note = <<<
+  raw heredoc text,
+  backslashes \ stay literal
+  >>>
+
+# Property blocks: replace (:), merge (bare), and clone (:=).
+server: {
+  host = localhost
+  port = 80
+}
+server { tls = @true }       # merge into the block above
+mirror := server            # clone the whole subtree
+
+# Arrays: scalars, bare strings, nesting, and per-element properties.
+ports = [80, 443, 8080]
+tags = [red, green, blue]
+matrix = [[1, 2], [3, 4]]
+columns = [
+  { name = id, width = 40 },
+  { name = label, width = 120 },
+]
+
+# References: absolute, ancestor, relative, and indexed.
+primary = $server.host
+parent = $^
+sibling = $^.port
+first_tag = $tags[0]
+
+# Definitions and deletions.
+debug
+-deprecated
+feature.flags.beta = @true
+
+# From https://github.com/malloydata/motly

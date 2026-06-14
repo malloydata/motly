@@ -1,0 +1,475 @@
+{
+  "description": "The spec for source.motly. Each case pairs a MOTLY snippet (code) with the TextMate scopes the grammar must assign (expect[].text -> scope). Two tests guard it: grammar-scope.test.ts asserts the grammar assigns each scope (vscode-textmate), and grammar-conformance.test.ts asserts every code snippet parses clean through the real MOTLY parser, so the corpus can't drift from the language. Authored by hand; not published in the npm package.",
+  "cases": [
+    {
+      "name": "assignValue =",
+      "code": "color = red",
+      "expect": [
+        {
+          "text": "color",
+          "scope": "entity.name.tag.motly"
+        },
+        {
+          "text": "=",
+          "scope": "keyword.operator.assignment.motly"
+        },
+        {
+          "text": "red",
+          "scope": "string.unquoted.motly"
+        }
+      ]
+    },
+    {
+      "name": "assignBoth :=",
+      "code": "base := other",
+      "expect": [
+        {
+          "text": ":=",
+          "scope": "keyword.operator.assignment.motly"
+        }
+      ]
+    },
+    {
+      "name": "replaceProps :",
+      "code": "server: { port = 80 }",
+      "expect": [
+        {
+          "text": "server",
+          "scope": "entity.name.tag.motly"
+        },
+        {
+          "text": ":",
+          "scope": "keyword.operator.assignment.motly"
+        },
+        {
+          "text": "port",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "mergeProps (bare block)",
+      "code": "server { port = 80 }",
+      "expect": [
+        {
+          "text": "server",
+          "scope": "entity.name.tag.motly"
+        },
+        {
+          "text": "{",
+          "scope": "punctuation.definition.block.begin.motly"
+        }
+      ]
+    },
+    {
+      "name": "definition flag",
+      "code": "enabled",
+      "expect": [
+        {
+          "text": "enabled",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "definition delete -name",
+      "code": "-stale",
+      "expect": [
+        {
+          "text": "-",
+          "scope": "keyword.operator.negation.motly"
+        },
+        {
+          "text": "stale",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "clearAll -...",
+      "code": "-...",
+      "expect": [
+        {
+          "text": "-...",
+          "scope": "keyword.operator.negation.motly"
+        }
+      ]
+    },
+    {
+      "name": "dotted property path",
+      "code": "a.b.c = 1",
+      "expect": [
+        {
+          "text": "a.b.c",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "backtick identifier is a key, not a string",
+      "note": "EBNF: backtick is a quoted identifier; it only appears in key position.",
+      "code": "`weird key` = 1",
+      "expect": [
+        {
+          "text": "`weird key`",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "space-separated assignments keep keys as keys",
+      "note": "b must color as a key, not as a value of a.",
+      "code": "a=1 b=2",
+      "expect": [
+        {
+          "text": "a",
+          "scope": "entity.name.tag.motly"
+        },
+        {
+          "text": "b",
+          "scope": "entity.name.tag.motly"
+        },
+        {
+          "text": "2",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    },
+    {
+      "name": "@true",
+      "code": "x = @true",
+      "expect": [
+        {
+          "text": "@true",
+          "scope": "constant.language.motly"
+        }
+      ]
+    },
+    {
+      "name": "@false",
+      "code": "x = @false",
+      "expect": [
+        {
+          "text": "@false",
+          "scope": "constant.language.motly"
+        }
+      ]
+    },
+    {
+      "name": "@none",
+      "code": "x = @none",
+      "expect": [
+        {
+          "text": "@none",
+          "scope": "constant.language.motly"
+        }
+      ]
+    },
+    {
+      "name": "@env.NAME",
+      "code": "home = @env.HOME",
+      "expect": [
+        {
+          "text": "@env",
+          "scope": "support.variable.motly"
+        },
+        {
+          "text": "HOME",
+          "scope": "support.variable.motly"
+        }
+      ]
+    },
+    {
+      "name": "@date (day)",
+      "code": "d = @2024-01-31",
+      "expect": [
+        {
+          "text": "@2024-01-31",
+          "scope": "constant.other.date.motly"
+        }
+      ]
+    },
+    {
+      "name": "@date (datetime + tz)",
+      "code": "d = @2024-01-31T09:30:00Z",
+      "expect": [
+        {
+          "text": "@2024-01-31T09:30:00Z",
+          "scope": "constant.other.date.motly"
+        }
+      ]
+    },
+    {
+      "name": "integer",
+      "code": "n = 42",
+      "expect": [
+        {
+          "text": "42",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    },
+    {
+      "name": "negative float with exponent",
+      "code": "n = -1.5e-3",
+      "expect": [
+        {
+          "text": "-1.5e-3",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    },
+    {
+      "name": "leading-dot number",
+      "code": "n = .25",
+      "expect": [
+        {
+          "text": ".25",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    },
+    {
+      "name": "digit-led bare string is not a number",
+      "note": "parser falls back to a bareString when a number is followed by bare chars.",
+      "code": "v = 3px",
+      "expect": [
+        {
+          "text": "3px",
+          "scope": "string.unquoted.motly"
+        }
+      ]
+    },
+    {
+      "name": "absolute reference $path",
+      "code": "r = $a.b",
+      "expect": [
+        {
+          "text": "$",
+          "scope": "punctuation.definition.reference.motly"
+        },
+        {
+          "text": "$a.b",
+          "scope": "variable.other.reference.motly"
+        }
+      ]
+    },
+    {
+      "name": "parent reference $^",
+      "code": "r = $^",
+      "expect": [
+        {
+          "text": "^",
+          "scope": "keyword.operator.reference.motly"
+        }
+      ]
+    },
+    {
+      "name": "relative reference $^.foo",
+      "code": "r = $^.foo",
+      "expect": [
+        {
+          "text": "$",
+          "scope": "punctuation.definition.reference.motly"
+        },
+        {
+          "text": ".",
+          "scope": "punctuation.accessor.motly"
+        }
+      ]
+    },
+    {
+      "name": "reference with array index",
+      "code": "r = $items[2].name",
+      "expect": [
+        {
+          "text": "[2]",
+          "scope": "constant.numeric.index.motly"
+        }
+      ]
+    },
+    {
+      "name": "double-quoted string",
+      "code": "x = \"hi there\"",
+      "expect": [
+        {
+          "text": "\"hi there\"",
+          "scope": "string.quoted.double.motly"
+        }
+      ]
+    },
+    {
+      "name": "escape in double-quoted string",
+      "code": "x = \"a\\nb\"",
+      "expect": [
+        {
+          "text": "\\n",
+          "scope": "constant.character.escape.motly"
+        }
+      ]
+    },
+    {
+      "name": "unicode escape",
+      "code": "x = \"\\u00e9\"",
+      "expect": [
+        {
+          "text": "\\u00e9",
+          "scope": "constant.character.escape.motly"
+        }
+      ]
+    },
+    {
+      "name": "triple-double string",
+      "code": "x = \"\"\"a\nb\"\"\"",
+      "expect": [
+        {
+          "text": "\"\"\"",
+          "scope": "punctuation.definition.string.begin.motly"
+        }
+      ]
+    },
+    {
+      "name": "single-quoted raw string",
+      "code": "x = 'C:\\path'",
+      "expect": [
+        {
+          "text": "'C:\\path'",
+          "scope": "string.quoted.single.motly"
+        }
+      ]
+    },
+    {
+      "name": "single-quoted: backslash-quote does not close",
+      "note": "in a raw single string, \\' is a literal pair, not a terminator.",
+      "code": "x = 'a\\'b' y = 2",
+      "expect": [
+        {
+          "text": "y",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "triple-single raw string",
+      "code": "x = '''a\nb'''",
+      "expect": [
+        {
+          "text": "'''",
+          "scope": "punctuation.definition.string.begin.motly"
+        }
+      ]
+    },
+    {
+      "name": "heredoc",
+      "code": "x = <<<\n  hello\n  >>>",
+      "expect": [
+        {
+          "text": "<<<",
+          "scope": "punctuation.definition.string.begin.motly"
+        }
+      ]
+    },
+    {
+      "name": "array of scalars",
+      "code": "xs = [1, 2, 3]",
+      "expect": [
+        {
+          "text": "[",
+          "scope": "punctuation.definition.array.begin.motly"
+        },
+        {
+          "text": "1",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    },
+    {
+      "name": "array of bare strings",
+      "code": "tags = [red, green]",
+      "expect": [
+        {
+          "text": "red",
+          "scope": "string.unquoted.motly"
+        }
+      ]
+    },
+    {
+      "name": "nested array",
+      "code": "m = [[1], [2]]",
+      "expect": [
+        {
+          "text": "[[",
+          "scope": "punctuation.definition.array.begin.motly"
+        }
+      ]
+    },
+    {
+      "name": "array element with properties",
+      "code": "xs = [ 1 { unit = px } ]",
+      "expect": [
+        {
+          "text": "unit",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "array of property-only elements",
+      "code": "rows = [ { a = 1 }, { a = 2 } ]",
+      "expect": [
+        {
+          "text": "a",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "nested blocks",
+      "code": "a { b { c = 1 } }",
+      "expect": [
+        {
+          "text": "c",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "value with trailing properties",
+      "code": "node = $ref { extra = 1 }",
+      "expect": [
+        {
+          "text": "$ref",
+          "scope": "variable.other.reference.motly"
+        },
+        {
+          "text": "extra",
+          "scope": "entity.name.tag.motly"
+        }
+      ]
+    },
+    {
+      "name": "line comment",
+      "code": "# just a note\nx = 1",
+      "expect": [
+        {
+          "text": "# just a note",
+          "scope": "comment.line.number-sign.motly"
+        }
+      ]
+    },
+    {
+      "name": "trailing comment after a value",
+      "code": "x = 1 # trailing",
+      "expect": [
+        {
+          "text": "# trailing",
+          "scope": "comment.line.number-sign.motly"
+        },
+        {
+          "text": "1",
+          "scope": "constant.numeric.motly"
+        }
+      ]
+    }
+  ]
+}

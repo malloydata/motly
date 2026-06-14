@@ -6,7 +6,8 @@
   "main": "build/parser/src/index.js",
   "types": "build/parser/src/index.d.ts",
   "files": [
-    "build/"
+    "build/",
+    "grammar/source.motly.tmGrammar.json"
   ],
   "repository": {
     "type": "git",
@@ -25,6 +26,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }

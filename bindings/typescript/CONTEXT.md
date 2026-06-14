@@ -6,6 +6,7 @@
 bindings/typescript/
   interface/         — shared MOTLY tree types (single source of truth)
   parser/            — pure TS parser, published as @malloydata/motly-ts-parser
+  parser/grammar/    — source.motly TextMate grammar (shipped with the package; see grammar/README.md)
   wasm/              — (future) Rust/WASM parser, same API surface
 ```
 
