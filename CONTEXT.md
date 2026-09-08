@@ -61,11 +61,11 @@ docs/
 
 test-data/
   fixtures/        — Shared JSON test fixtures (both implementations run these)
-    parse.json         — 142 entries: parse input → expected value
-    parse-errors.json  — 14 entries: parse input → expected errors
-    schema.json        — 114 entries: schema + input → expected validation errors
-    refs.json          — 16 entries: input → expected reference validation errors
-    session.json       — 28 entries: multi-step session operations (including forward reference, circular clone, write-through-link)
+    parse.json         — parse input → expected value
+    parse-errors.json  — parse input → expected errors
+    schema.json        — schema + input → expected validation errors
+    refs.json          — input → expected reference validation errors
+    session.json       — multi-step session operations (including forward reference, circular clone, write-through-link)
   k8s-deployment-schema.motly  — Example: Kubernetes deployment schema
   k8s-deployment-sample.motly  — Example: Kubernetes deployment config
 ```
@@ -127,6 +127,17 @@ Most files have no forward references — the scan produces a single chunk that 
 
 The interpreter mutates the `MOTLYNode` tree in place (does not return a new value).
 
+### Property bags (TypeScript)
+
+Build every property bag with `emptyProperties()` and read one by name with
+`getProperty()`, both in `interface/src/types.ts`. Bags keyed by user names that never
+leave the package (the validator's `TYPES` table and its `EXCLUSIVE` groups) are `Map`s.
+
+`getValue()` returns these bags to the caller, so `tree.properties` has no prototype:
+`Object.keys`, `in`, spread, and `JSON.stringify` behave normally, but
+`tree.properties.hasOwnProperty(k)` throws. Rust is unaffected — `BTreeMap` has no
+inherited names.
+
 ### Source location tracking
 
 Every `MOTLYNode` carries an optional `location: MOTLYLocation` recording where it was first defined. A location contains:
@@ -166,7 +177,7 @@ Property metadata: `EXCLUSIVE` (mutual exclusion groups), `REQUIRES` (sibling de
 
 **IMPORTANT GOTCHA**: Array types MUST be quoted: `items = "string[]"`, `ports = "number[]"`. The brackets `[]` are not valid bare-string characters, so unquoted `string[]` causes a parse error.
 
-**Implementation status**: TypeScript validator is complete (114 schema fixtures passing). Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
+**Implementation status**: TypeScript validator is complete. Rust schema validator is stubbed out (nop) — reference validation still works. See `docs/schema_spec.md` for the full spec.
 
 Error codes: `missing-required`, `wrong-type`, `unknown-property`, `invalid-schema`, `invalid-enum-value`, `pattern-mismatch`, `out-of-range`, `length-violation`, `exclusive-violation`, `requires-violation`, `ref-not-allowed`
 
@@ -277,4 +288,5 @@ The Rust crate is not published to crates.io (yet). Tags are the version history
 2. **`@` starts special values**: `@true`, `@false`, `@none`, `@2024-...` — values containing `@` must be quoted
 3. **Three operators**: `=` (value only), `:` (properties only), `:=` (both). Space-before-brace merges, `:` replaces.
 4. **Bare strings**: Tokens like `v2` (digit after letter) are bare strings, not numbers. Only pure digit sequences (optionally with `.`, `e`, `-`) parse as numbers.
-5. **`file:` deps and Babel**: `file:` dependencies in `package.json` create symlinks. Babel resolves the real path and processes files it shouldn't, causing `@babel/runtime` errors. Fix: use `npm pack` tarball for local testing in downstream projects.
+5. **Property bags have no prototype** (TS): build them with `emptyProperties()` and read them with `getProperty()`. See "Property bags".
+6. **`file:` deps and Babel**: `file:` dependencies in `package.json` create symlinks. Babel resolves the real path and processes files it shouldn't, causing `@babel/runtime` errors. Fix: use `npm pack` tarball for local testing in downstream projects.

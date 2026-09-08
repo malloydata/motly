@@ -146,5 +146,11 @@
   {"name": "bare name creates new if absent", "input": "newnode", "expected": {"properties": {"newnode": {}}}},
 
   {"name": "env reference backtick identifier", "input": "key = @env.`complex-name`", "expected": {"properties": {"key": {"eq": {"env": "complex-name"}}}}},
-  {"name": "nested array with properties", "input": "x = [[a, b] { tag = 1 }]", "expected": {"properties": {"x": {"eq": [{"eq": [{"eq": "a"}, {"eq": "b"}], "properties": {"tag": {"eq": 1}}}]}}}}
+  {"name": "nested array with properties", "input": "x = [[a, b] { tag = 1 }]", "expected": {"properties": {"x": {"eq": [{"eq": [{"eq": "a"}, {"eq": "b"}], "properties": {"tag": {"eq": 1}}}]}}}},
+
+  {"name": "property named __proto__", "input": "__proto__ = 1", "expected": {"properties": {"__proto__": {"eq": 1}}}},
+  {"name": "property named __proto__ as path segment", "input": "__proto__.foo = 1", "expected": {"properties": {"__proto__": {"properties": {"foo": {"eq": 1}}}}}},
+  {"name": "property named constructor as path segment", "input": "constructor.foo = 1", "expected": {"properties": {"constructor": {"properties": {"foo": {"eq": 1}}}}}},
+  {"name": "property named prototype nested under constructor", "input": "constructor { prototype { polluted = 1 } }", "expected": {"properties": {"constructor": {"properties": {"prototype": {"properties": {"polluted": {"eq": 1}}}}}}}},
+  {"name": "property named toString", "input": "toString.foo = 1", "expected": {"properties": {"toString": {"properties": {"foo": {"eq": 1}}}}}}
 ]

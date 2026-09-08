@@ -78,5 +78,9 @@
     "name": "cloned reference unresolvable at new location",
     "input": "wrapper { sibling = hello  source { ref = $^.sibling } }  copy := $wrapper.source",
     "expectedErrors": [{"code": "unresolved-reference", "path": ["copy", "ref"]}]
-  }
+  },
+
+  {"name": "reference to undefined __proto__ is unresolved", "input": "x = $__proto__", "expectedErrors": [{"code": "unresolved-reference", "path": ["x"]}]},
+  {"name": "reference to undefined toString is unresolved", "input": "x = $toString", "expectedErrors": [{"code": "unresolved-reference", "path": ["x"]}]},
+  {"name": "reference to a real property named __proto__ resolves", "input": "__proto__ = hello  x = $__proto__", "expectedErrors": []}
 ]

@@ -101,6 +101,31 @@ export function formatRef(link: MOTLYRef): string {
   return s;
 }
 
+/**
+ * Create an empty property bag.
+ *
+ * Property names come from untrusted source text, so a bag must have no
+ * prototype: a MOTLY property named `__proto__` or `toString` is an ordinary
+ * entry, and on a plain `{}` it would instead read from or write to
+ * `Object.prototype`. Every property bag in a MOTLY tree is built here.
+ */
+export function emptyProperties(): Record<string, MOTLYNode> {
+  return Object.create(null) as Record<string, MOTLYNode>;
+}
+
+/**
+ * Look up a name in a property bag, ignoring anything inherited. A bag handed
+ * in by a caller may be a plain object, where `toString` answers a lookup
+ * without being a property of the node.
+ */
+export function getProperty<T>(
+  props: Record<string, T> | undefined,
+  name: string
+): T | undefined {
+  if (props === undefined) return undefined;
+  return Object.prototype.hasOwnProperty.call(props, name) ? props[name] : undefined;
+}
+
 /** Type guard: is this node a link reference? */
 export function isRef(node: MOTLYNode | undefined): node is MOTLYRef {
   return typeof node === "object" && node !== null && "linkTo" in node && "linkUps" in node && !Array.isArray(node) && !(node instanceof Date);

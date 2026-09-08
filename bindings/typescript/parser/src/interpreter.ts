@@ -5,7 +5,7 @@ import {
   RefPathSegment,
   Span,
 } from "./ast";
-import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, MOTLYSessionOptions, isRef, isDataNode, isMotlyError, formatRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, MOTLYRef, MOTLYError, MOTLYLocation, MOTLYSessionOptions, isRef, isDataNode, isMotlyError, formatRef, emptyProperties, getProperty } from "../../interface/src/types";
 import { cloneNode } from "./clone";
 
 /** Per-parse execution context, combining the parse ID with session options. */
@@ -493,7 +493,7 @@ function applySetValue(
   if (!result) return;
   const [writeKey, parent] = result;
   const props = getOrCreateProperties(parent);
-  if (props[writeKey] === undefined) {
+  if (getProperty(props, writeKey) === undefined) {
     props[writeKey] = {};
   }
   const target = ensureDataNode(props, writeKey);
@@ -534,7 +534,7 @@ function applyClearProperties(
   if (!result) return;
   const [writeKey, parent] = result;
   const props = getOrCreateProperties(parent);
-  const existing = props[writeKey];
+  const existing = getProperty(props, writeKey);
   if (existing !== undefined && !isRef(existing)) {
     delete existing.properties;
   } else {
@@ -552,17 +552,17 @@ function applyClearAll(
 ): void {
   if (path.length === 0) {
     delete root.eq;
-    root.properties = {};
+    root.properties = emptyProperties();
     return;
   }
   const result = buildAccessPath(root, path, ctx, span, errors);
   if (!result) return;
   const [writeKey, parent] = result;
   const props = getOrCreateProperties(parent);
-  const existing = props[writeKey];
+  const existing = getProperty(props, writeKey);
   if (existing !== undefined && !isRef(existing)) {
     delete existing.eq;
-    existing.properties = {};
+    existing.properties = emptyProperties();
   } else {
     props[writeKey] = {};
   }
@@ -577,7 +577,7 @@ function applyDefine(
   if (!result) return;
   const [writeKey, parent] = result;
   const props = getOrCreateProperties(parent);
-  if (props[writeKey] === undefined) {
+  if (getProperty(props, writeKey) === undefined) {
     const node: MOTLYDataNode = {};
     node.location = makeLocation(ctx, span);
     props[writeKey] = node;
@@ -679,7 +679,8 @@ function buildAccessPath(
     const segment = path[i];
     const props = getOrCreateProperties(current);
 
-    if (props[segment] !== undefined && isRef(props[segment])) {
+    const existing = getProperty(props, segment);
+    if (existing !== undefined && isRef(existing)) {
       errors.push({
         code: "write-through-link",
         message: `Cannot write through link reference "${segment}"`,
@@ -689,7 +690,7 @@ function buildAccessPath(
       return null;
     }
 
-    if (props[segment] === undefined) {
+    if (existing === undefined) {
       const intermediate: MOTLYDataNode = {};
       intermediate.location = makeLocation(ctx, span);
       props[segment] = intermediate;
@@ -833,7 +834,7 @@ function resolveAndClone(
       if (!start.properties) {
         throw cloneError(`Clone reference ${refStr} could not be resolved: path segment "${stmtPath[i]}" not found`);
       }
-      const pv = start.properties[stmtPath[i]];
+      const pv = getProperty(start.properties, stmtPath[i]);
       if (pv === undefined) {
         throw cloneError(`Clone reference ${refStr} could not be resolved: path segment "${stmtPath[i]}" not found`);
       }
@@ -857,7 +858,7 @@ function resolveAndClone(
       if (!current.properties) {
         throw cloneError(`Clone reference ${refStr} could not be resolved: property "${seg.name}" not found`);
       }
-      const pv = current.properties[seg.name];
+      const pv = getProperty(current.properties, seg.name);
       if (pv === undefined) {
         throw cloneError(`Clone reference ${refStr} could not be resolved: property "${seg.name}" not found`);
       }
@@ -927,8 +928,9 @@ function resolveRefFromRoot(
     if (!isDataNode(current)) return null;
     const dataNode: MOTLYDataNode = current;
     if (typeof seg === "string") {
-      if (!dataNode.properties || !(seg in dataNode.properties)) return null;
-      current = dataNode.properties[seg];
+      const child = getProperty(dataNode.properties, seg);
+      if (child === undefined) return null;
+      current = child;
     } else {
       if (!dataNode.eq || !Array.isArray(dataNode.eq)) return null;
       if (seg >= dataNode.eq.length) return null;
@@ -1024,7 +1026,7 @@ function getOrCreateProperties(
   node: MOTLYDataNode
 ): Record<string, MOTLYNode> {
   if (!node.properties) {
-    node.properties = {};
+    node.properties = emptyProperties();
   }
   return node.properties;
 }
@@ -1038,8 +1040,8 @@ function ensureDataNode(
   props: Record<string, MOTLYNode>,
   key: string
 ): MOTLYDataNode {
-  const pv = props[key];
-  if (isRef(pv)) {
+  const pv = getProperty(props, key);
+  if (pv === undefined || isRef(pv)) {
     const node: MOTLYDataNode = {};
     props[key] = node;
     return node;
