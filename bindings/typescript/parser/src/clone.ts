@@ -1,4 +1,4 @@
-import { MOTLYNode, MOTLYDataNode, isRef, isEnvRef } from "../../interface/src/types";
+import { MOTLYNode, MOTLYDataNode, isRef, isEnvRef, emptyProperties } from "../../interface/src/types";
 
 /** Deep clone a MOTLYDataNode. */
 export function cloneNode(value: MOTLYDataNode): MOTLYDataNode {
@@ -19,7 +19,7 @@ export function cloneNode(value: MOTLYDataNode): MOTLYDataNode {
   }
 
   if (value.properties) {
-    const props: Record<string, MOTLYNode> = {};
+    const props = emptyProperties();
     for (const key of Object.keys(value.properties)) {
       props[key] = cloneMotlyNode(value.properties[key]);
     }

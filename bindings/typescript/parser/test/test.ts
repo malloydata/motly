@@ -30,7 +30,9 @@ function hydrateValue(v: any): any {
   if (Array.isArray(v)) {
     return v.map(hydrateValue);
   }
-  const result: any = {};
+  // Null-prototype: a fixture may name a property "__proto__", which on a
+  // plain object would set the prototype instead of adding the key.
+  const result: any = Object.create(null);
   for (const key of Object.keys(v)) {
     result[key] = hydrateValue(v[key]);
   }
@@ -580,5 +582,59 @@ describe("disableReferences option", () => {
     const codes = result.errors.map(e => e.code);
     assert.ok(codes.includes("ref-not-allowed"));
     assert.ok(!codes.includes("unresolved-reference"));
+  });
+});
+
+// ── Property bags and Object.prototype ──────────────────────────
+//
+// The shared fixtures cover the tree a hostile property name produces; these
+// cover what only the JavaScript port can get wrong.
+
+describe("Property bags", () => {
+  it("does not reach Object.prototype through a property named __proto__", () => {
+    const s = new MOTLYSession();
+    s.parse("__proto__.foo = 1\n__proto__.bar { baz = 2 }");
+    s.finish();
+    const witness: Record<string, unknown> = {};
+    assert.equal(witness.properties, undefined);
+    assert.equal(witness.location, undefined);
+    assert.equal(witness.eq, undefined);
+  });
+
+  it("keeps parsing after hostile input in the same process", () => {
+    const hostile = new MOTLYSession();
+    hostile.parse("__proto__.foo = 1\nconstructor.prototype.bar = 2");
+    hostile.finish();
+
+    const benign = new MOTLYSession();
+    benign.parse("name = hello");
+    const v = benign.finish().getValue();
+    assert.deepStrictEqual(Object.keys(v.properties!), ["name"]);
+  });
+
+  it("gives the returned tree property bags with no prototype", () => {
+    const s = new MOTLYSession();
+    s.parse("outer { inner = 1 }");
+    const v = s.finish().getValue();
+    assert.equal(Object.getPrototypeOf(v.properties!), null);
+    const outer = v.properties!.outer as { properties?: object };
+    assert.equal(Object.getPrototypeOf(outer.properties!), null);
+  });
+
+  it("treats a property named toString as absent when it was never set", () => {
+    const s = new MOTLYSession();
+    s.parse("name = hello");
+    const v = s.finish().getValue();
+    assert.equal(v.properties!.toString, undefined);
+  });
+
+  it("validates a caller's tree built from plain objects", () => {
+    const { schema, errors } = MOTLYSchema.parse("REQUIRED { toString = string }");
+    assert.deepStrictEqual(errors, []);
+    // On a plain object `toString` answers a lookup without being a property
+    // of the node, so the validator must ask for own properties only.
+    const tree = { properties: { name: { eq: "hello" } } };
+    const codes = schema.validate(tree).map((e) => e.code);
+    assert.ok(codes.includes("missing-required"));
   });
 });

@@ -8,6 +8,7 @@ import {
   MOTLYValidationError,
   isRef,
   formatRef,
+  getProperty,
 } from "../../interface/src/types";
 
 /** Push a schema error, attaching node location if available. */
@@ -140,7 +141,7 @@ function resolvePath(
       if (!current.properties) {
         return `Reference "${linkStr}" could not be resolved: property "${seg}" not found (node has no properties)`;
       }
-      const childPv: MOTLYNode | undefined = current.properties[seg];
+      const childPv: MOTLYNode | undefined = getProperty(current.properties, seg);
       if (childPv === undefined) {
         return `Reference "${linkStr}" could not be resolved: property "${seg}" not found`;
       }
@@ -179,16 +180,16 @@ const MAX_VALIDATION_DEPTH = 64;
 
 // Pre-loaded types: the validator seeds the namespace with these
 // before reading user-defined types from the schema's TYPES block.
-const PRELOADED_TYPES: Record<string, MOTLYDataNode> = {
-  string:  { properties: { VALUE: { eq: "string" } } },
-  number:  { properties: { VALUE: { eq: "number" } } },
-  integer: { properties: { VALUE: { eq: "integer" } } },
-  boolean: { properties: { VALUE: { eq: "boolean" } } },
-  date:    { properties: { VALUE: { eq: "date" } } },
-  flag:    { properties: { ADDITIONAL: { eq: "reject" } } },
-  tag:     { properties: { ADDITIONAL: { eq: "accept" } } },
-  any:     { properties: { ADDITIONAL: { eq: "accept" } } },
-};
+const PRELOADED_TYPES: ReadonlyMap<string, MOTLYDataNode> = new Map<string, MOTLYDataNode>([
+  ["string",  { properties: { VALUE: { eq: "string" } } }],
+  ["number",  { properties: { VALUE: { eq: "number" } } }],
+  ["integer", { properties: { VALUE: { eq: "integer" } } }],
+  ["boolean", { properties: { VALUE: { eq: "boolean" } } }],
+  ["date",    { properties: { VALUE: { eq: "date" } } }],
+  ["flag",    { properties: { ADDITIONAL: { eq: "reject" } } }],
+  ["tag",     { properties: { ADDITIONAL: { eq: "accept" } } }],
+  ["any",     { properties: { ADDITIONAL: { eq: "accept" } } }],
+]);
 
 export function validateSchema(
   tag: MOTLYDataNode,
@@ -203,13 +204,13 @@ export function validateSchema(
 function buildTypesMap(
   schema: MOTLYDataNode,
   errors: MOTLYSchemaError[]
-): Record<string, MOTLYDataNode> {
-  const types: Record<string, MOTLYDataNode> = { ...PRELOADED_TYPES };
+): Map<string, MOTLYDataNode> {
+  const types = new Map(PRELOADED_TYPES);
   const typesNode = getDirective(schema, "TYPES");
   if (typesNode?.properties) {
     for (const [name, pv] of Object.entries(typesNode.properties)) {
       if (isRef(pv)) continue;
-      if (name in PRELOADED_TYPES) {
+      if (PRELOADED_TYPES.has(name)) {
         errors.push({
           message: `Type "${name}" cannot shadow pre-loaded type`,
           path: ["TYPES", name],
@@ -217,7 +218,7 @@ function buildTypesMap(
         });
         continue;
       }
-      types[name] = pv;
+      types.set(name, pv);
     }
   }
   return types;
@@ -225,8 +226,7 @@ function buildTypesMap(
 
 /** Read a directive property from a constraint node. */
 function getDirective(node: MOTLYDataNode, name: string): MOTLYDataNode | undefined {
-  if (!node.properties) return undefined;
-  const pv = node.properties[name];
+  const pv = getProperty(node.properties, name);
   if (pv === undefined || isRef(pv)) return undefined;
   return pv;
 }
@@ -236,7 +236,7 @@ function getDirective(node: MOTLYDataNode, name: string): MOTLYDataNode | undefi
 function validateConstraint(
   target: MOTLYDataNode,
   constraint: MOTLYDataNode,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -268,7 +268,7 @@ function validateConstraint(
 function validateValue(
   target: MOTLYDataNode,
   valueNode: MOTLYDataNode,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -320,7 +320,7 @@ function validateValue(
 
     default: {
       // User-defined value type — resolve its VALUE constraint
-      const typeDef = types[valueType];
+      const typeDef = types.get(valueType);
       if (!typeDef) {
         pushSchemaError(errors, "invalid-schema", `Unknown VALUE type "${valueType}"`, [...path], target);
         return;
@@ -435,8 +435,7 @@ type AdditionalPolicy =
   | { kind: "inline"; constraint: MOTLYDataNode };
 
 function getAdditionalPolicy(constraint: MOTLYDataNode): AdditionalPolicy {
-  if (!constraint.properties) return { kind: "reject" };
-  const pv = constraint.properties["ADDITIONAL"];
+  const pv = getProperty(constraint.properties, "ADDITIONAL");
   if (pv === undefined) return { kind: "reject" };
   if (isRef(pv)) return { kind: "reject" };
 
@@ -460,7 +459,7 @@ function getAdditionalPolicy(constraint: MOTLYDataNode): AdditionalPolicy {
 function validateProperties(
   target: MOTLYDataNode,
   constraint: MOTLYDataNode,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -475,7 +474,7 @@ function validateProperties(
     for (const [key, propDefPv] of Object.entries(required)) {
       if (isRef(propDefPv)) continue;
       const propPath = [...path, key];
-      const targetValue = targetProps?.[key];
+      const targetValue = getProperty(targetProps, key);
       if (targetValue === undefined) {
         pushSchemaError(errors, "missing-required", `Missing required property "${key}"`, propPath, target);
       } else {
@@ -488,7 +487,7 @@ function validateProperties(
   if (optional && targetProps) {
     for (const [key, propDefPv] of Object.entries(optional)) {
       if (isRef(propDefPv)) continue;
-      const targetValue = targetProps[key];
+      const targetValue = getProperty(targetProps, key);
       if (targetValue !== undefined) {
         validatePropertyValue(targetValue, propDefPv, types, [...path, key], errors, depth);
       }
@@ -552,7 +551,7 @@ function validateProperties(
 function validatePropertyValue(
   targetPv: MOTLYNode,
   propDef: MOTLYDataNode,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -577,7 +576,7 @@ function validatePropertyValue(
 function validateAgainstTypeName(
   target: MOTLYDataNode,
   typeName: string,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -588,7 +587,7 @@ function validateAgainstTypeName(
     return;
   }
 
-  const typeDef = types[typeName];
+  const typeDef = types.get(typeName);
   if (!typeDef) {
     pushSchemaError(errors, "invalid-schema", `Unknown type "${typeName}" in schema`, [...path], target);
     return;
@@ -606,7 +605,7 @@ function validateAgainstTypeName(
 function validateArrayType(
   target: MOTLYDataNode,
   innerType: string,
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -632,7 +631,7 @@ function validateArrayType(
 function validateOneOfArray(
   target: MOTLYDataNode,
   typeRefs: MOTLYNode[],
-  types: Record<string, MOTLYDataNode>,
+  types: ReadonlyMap<string, MOTLYDataNode>,
   path: string[],
   errors: MOTLYSchemaError[],
   depth: number
@@ -677,7 +676,7 @@ function validateExclusiveGroups(
 ): void {
   if (!targetProps) return;
 
-  const groups: Record<string, string[]> = {};
+  const groups = new Map<string, string[]>();
 
   function collect(propDefs: Record<string, MOTLYNode> | undefined) {
     if (!propDefs) return;
@@ -698,8 +697,9 @@ function validateExclusiveGroups(
       }
 
       for (const g of groupNames) {
-        if (!groups[g]) groups[g] = [];
-        groups[g].push(key);
+        const members = groups.get(g);
+        if (members) members.push(key);
+        else groups.set(g, [key]);
       }
     }
   }
@@ -707,8 +707,8 @@ function validateExclusiveGroups(
   collect(required);
   collect(optional);
 
-  for (const [group, members] of Object.entries(groups)) {
-    const present = members.filter((m) => targetProps[m] !== undefined);
+  for (const [group, members] of groups) {
+    const present = members.filter((m) => getProperty(targetProps, m) !== undefined);
     if (present.length > 1) {
       pushSchemaError(errors, "exclusive-violation", `Properties [${present.join(", ")}] are mutually exclusive (group "${group}")`, [...path]);
     }
@@ -728,7 +728,7 @@ function validateRequiresDeps(
     if (!propDefs) return;
     for (const [key, pv] of Object.entries(propDefs)) {
       if (isRef(pv)) continue;
-      if (targetProps![key] === undefined) continue; // property not present
+      if (getProperty(targetProps, key) === undefined) continue; // property not present
       const requires = getDirective(pv, "REQUIRES");
       if (!requires || !Array.isArray(requires.eq)) continue;
 
@@ -736,7 +736,7 @@ function validateRequiresDeps(
         if (isRef(req)) continue;
         const reqName = typeof req.eq === "string" ? req.eq : undefined;
         if (!reqName) continue;
-        if (targetProps![reqName] === undefined) {
+        if (getProperty(targetProps, reqName) === undefined) {
           pushSchemaError(errors, "requires-violation", `Property "${key}" requires "${reqName}" to be present`, [...path, key]);
         }
       }

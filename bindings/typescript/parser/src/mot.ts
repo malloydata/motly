@@ -5,6 +5,7 @@ import {
   MOTLYValue,
   isRef,
   isEnvRef,
+  getProperty,
 } from "../../interface/src/types";
 
 /**
@@ -454,10 +455,11 @@ function navigateRef(
     const node: MOTLYDataNode = current;
     const seg = ref.linkTo[i];
     if (typeof seg === "string") {
-      if (!node.properties || !(seg in node.properties)) return undefined;
+      const child = getProperty(node.properties, seg);
+      if (child === undefined) return undefined;
       if (i > 0) navAncestors = [...navAncestors, parent];
       parent = node;
-      current = node.properties[seg];
+      current = child;
     } else {
       if (!node.eq || !Array.isArray(node.eq)) return undefined;
       if (seg >= node.eq.length) return undefined;
@@ -551,7 +553,7 @@ export function buildMot<M extends Mot = Mot>(root: MOTLYDataNode, options?: Get
   ): MotResolvedValue<M> {
     if (eq === undefined) return undefined;
     if (isEnvRef(eq)) {
-      const val = env ? env[eq.env] : undefined;
+      const val = getProperty(env, eq.env);
       if (val === undefined) return undefined;
       return { type: "string", value: val };
     }

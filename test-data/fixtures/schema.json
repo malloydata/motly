@@ -693,5 +693,11 @@
     "schema": "TYPES { string { VALUE = number } } REQUIRED { x = string }",
     "input": "x = hello",
     "expectedErrors": [{"code": "invalid-schema", "path": ["TYPES", "string"]}]
-  }
+  },
+
+  {"name": "EXCLUSIVE group named __proto__", "schema": "OPTIONAL { a { VALUE = number  EXCLUSIVE = __proto__ }  b { VALUE = number  EXCLUSIVE = __proto__ } }", "input": "a = 1  b = 2", "expectedErrors": [{"code": "exclusive-violation"}]},
+  {"name": "user type named toString does not shadow a pre-loaded type", "schema": "TYPES { toString { VALUE = string } }  REQUIRED { name = toString }", "input": "name = hi", "expectedErrors": []},
+  {"name": "required property named toString is missing", "schema": "ADDITIONAL = accept  REQUIRED { toString = string }", "input": "other = 1", "expectedErrors": [{"code": "missing-required", "path": ["toString"]}]},
+  {"name": "required property named constructor is present", "schema": "REQUIRED { constructor = string }", "input": "constructor = hi", "expectedErrors": []},
+  {"name": "unknown property named __proto__ is rejected", "schema": "ADDITIONAL = reject  REQUIRED { name = string }", "input": "name = hi  __proto__ = 1", "expectedErrors": [{"code": "unknown-property", "path": ["__proto__"]}]}
 ]
