@@ -9,7 +9,21 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE_JSON="$REPO_ROOT/bindings/typescript/parser/package.json"
+PACKAGE_LOCK="$REPO_ROOT/bindings/typescript/parser/package-lock.json"
 CARGO_TOML="$REPO_ROOT/Cargo.toml"
+CARGO_LOCK="$REPO_ROOT/Cargo.lock"
+
+# The npm package and the Rust crate ship under one tag, so they carry the same
+# version. The two lockfiles are regenerated from them, never edited.
+VERSION_FILES=("$PACKAGE_JSON" "$PACKAGE_LOCK" "$CARGO_TOML" "$CARGO_LOCK")
+
+cargo_toml_version() {
+  awk -F'"' '/^version = "/ { print $2; exit }' "$CARGO_TOML"
+}
+
+cargo_lock_version() {
+  awk '/^name = "motly-rust"$/ { getline; gsub(/["]/, "", $3); print $3; exit }' "$CARGO_LOCK"
+}
 
 BUMP="${1:-patch}"
 
@@ -48,6 +62,13 @@ fi
 # --- Compute version ---
 
 CURRENT=$(jq -r .version "$PACKAGE_JSON")
+CARGO_CURRENT=$(cargo_toml_version)
+if [ "$CURRENT" != "$CARGO_CURRENT" ]; then
+  echo "STOP: package.json is $CURRENT but Cargo.toml is $CARGO_CURRENT."
+  echo "They ship under one tag and must agree. Reconcile them first."
+  exit 1
+fi
+
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
 case "$BUMP" in
@@ -73,40 +94,47 @@ echo ""
 # --- Update version in source files ---
 
 revert_version_files() {
-  git -C "$REPO_ROOT" checkout -- "$PACKAGE_JSON" "$CARGO_TOML" 2>/dev/null
+  git -C "$REPO_ROOT" checkout -- "${VERSION_FILES[@]}" 2>/dev/null
+}
+
+abort() {
+  echo ""
+  echo "FAILED: $1"
+  revert_version_files
+  echo "  Version files reverted. Nothing was committed."
+  exit 1
+}
+
+require_version() {
+  [ "$2" = "$NEW" ] || abort "$1 reads $2, expected $NEW."
 }
 
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW\"/" "$PACKAGE_JSON"
 sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW\"/" "$CARGO_TOML"
 
+# sed exits 0 when it matches nothing, so confirm each file actually moved.
+require_version "package.json" "$(jq -r .version "$PACKAGE_JSON")"
+require_version "Cargo.toml" "$(cargo_toml_version)"
+
+echo "  Regenerating lockfiles..."
+(cd "$REPO_ROOT/bindings/typescript/parser" && npm install --package-lock-only --loglevel error) \
+  || abort "Could not regenerate package-lock.json."
+(cd "$REPO_ROOT" && cargo check --quiet) || abort "Could not regenerate Cargo.lock."
+
+require_version "package-lock.json" "$(jq -r .version "$PACKAGE_LOCK")"
+require_version "Cargo.lock" "$(cargo_lock_version)"
+
 # --- Run tests ---
 
 echo "  Running Rust tests..."
-if ! (cd "$REPO_ROOT" && cargo test --quiet); then
-  echo ""
-  echo "FAILED: Rust tests."
-  revert_version_files
-  echo "  Version files reverted. Nothing was committed."
-  exit 1
-fi
+(cd "$REPO_ROOT" && cargo test --quiet) || abort "Rust tests."
 
 echo "  Building TS interface..."
-if ! (cd "$REPO_ROOT/bindings/typescript/interface" && npm run build --silent); then
-  echo ""
-  echo "FAILED: TS interface build."
-  revert_version_files
-  echo "  Version files reverted. Nothing was committed."
-  exit 1
-fi
+(cd "$REPO_ROOT/bindings/typescript/interface" && npm run build --silent) \
+  || abort "TS interface build."
 
 echo "  Running TS parser tests..."
-if ! (cd "$REPO_ROOT/bindings/typescript/parser" && npm test --silent); then
-  echo ""
-  echo "FAILED: TS parser tests."
-  revert_version_files
-  echo "  Version files reverted. Nothing was committed."
-  exit 1
-fi
+(cd "$REPO_ROOT/bindings/typescript/parser" && npm test --silent) || abort "TS parser tests."
 
 echo "  All tests passed"
 echo ""
@@ -114,7 +142,7 @@ echo ""
 # --- Commit, tag, push ---
 
 echo "  Committing $TAG..."
-git -C "$REPO_ROOT" add "$PACKAGE_JSON" "$CARGO_TOML"
+git -C "$REPO_ROOT" add "${VERSION_FILES[@]}"
 git -C "$REPO_ROOT" commit -m "$TAG" --quiet
 
 echo "  Tagging $TAG..."
